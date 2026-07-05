@@ -88,6 +88,121 @@ def clean_value(value: Any) -> Any:
     return value
 
 
+def first_float(row: Dict[str, Any], keys: Sequence[str]) -> float | None:
+    for key in keys:
+        numeric = to_float(row.get(key))
+        if numeric is not None:
+            return numeric
+    return None
+
+
+def first_value(row: Dict[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in ("", None):
+            return value
+    return None
+
+
+def setup_levels_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Export the same setup-level annotations used by the original chart dashboard."""
+    specs = [
+        (
+            "T3 Low",
+            "L",
+            "#ef5350",
+            ["t3_low_price"],
+            ["t3_low_time"],
+        ),
+        (
+            "T2 High",
+            "H",
+            "#2962ff",
+            ["t2_high_price"],
+            ["t2_high_time"],
+        ),
+        (
+            "Current ISL",
+            "ISL",
+            "#f9a825",
+            ["current_isl_price", "isl_level"],
+            ["current_isl_time", "t1_sweep_low_time", "signal_time", "decision_time"],
+        ),
+        (
+            "Base ISL",
+            "ISLB",
+            "#ffb74d",
+            ["base_isl_price"],
+            ["base_isl_time", "t3_low_time"],
+        ),
+        (
+            "Base ISH",
+            "BSL",
+            "#26a69a",
+            ["base_ish_price"],
+            ["base_ish_time", "t2_high_time"],
+        ),
+    ]
+    levels: List[Dict[str, Any]] = []
+    for name, label, color, price_keys, time_keys in specs:
+        price = first_float(row, price_keys)
+        time = to_int(first_value(row, time_keys))
+        if price is None or time is None:
+            continue
+        levels.append(
+            {
+                "name": name,
+                "label": label,
+                "color": color,
+                "price": price,
+                "time": time,
+            }
+        )
+    return levels
+
+
+def setup_fvg_zones_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    lower = first_float(
+        row,
+        [
+            "bull_fvg_lower",
+            "bull_fvg_lower_price",
+            "tech_nearest_bull_fvg_lower",
+        ],
+    )
+    upper = first_float(
+        row,
+        [
+            "bull_fvg_upper",
+            "bull_fvg_upper_price",
+            "tech_nearest_bull_fvg_upper",
+        ],
+    )
+    if lower is None or upper is None:
+        return []
+    zone_time = to_int(
+        first_value(
+            row,
+            [
+                "bull_fvg_time",
+                "tech_nearest_bull_fvg_created_time",
+                "t1_sweep_low_time",
+                "signal_time",
+                "decision_time",
+            ],
+        )
+    )
+    return [
+        {
+            "label": "Bull FVG",
+            "side": "bull",
+            "lower": min(lower, upper),
+            "upper": max(lower, upper),
+            "time": zone_time,
+        }
+    ]
+
+
 def load_decision_rows(paths: Iterable[Path]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for path in paths:
@@ -195,6 +310,17 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
     if score is None:
         score = to_float(row.get("prediction"))
     strict_score = to_float(row.get("strict_score"))
+    raw_model_score = first_float(
+        row,
+        [
+            "raw_model_score",
+            "ungated_model_score",
+            "artifact_raw_model_score",
+            "signal_model_raw_score",
+        ],
+    )
+    main_gate_pass = boolish(row.get("main_gate_pass") or row.get("long_artifact_main_gate_pass"))
+    strict_gate_pass = boolish(row.get("strict_gate_pass") or row.get("long_artifact_strict_gate_pass"))
     risk = to_float(row.get("risk"))
     entry = to_float(row.get("entry_price"))
     stop = to_float(row.get("stop_price"))
@@ -221,6 +347,15 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
         "permission_raw": row.get("tds_entry_permission") or row.get("entry_permission") or row.get("permission") or None,
         "trade_action": row.get("tds_trade_action") or None,
         "model_score": score,
+        "raw_model_score": raw_model_score,
+        "main_gate_pass": main_gate_pass,
+        "strict_gate_pass": strict_gate_pass,
+        "score_gate_suppressed": (
+            raw_model_score is not None
+            and score is not None
+            and score == 0
+            and main_gate_pass is False
+        ),
         "strict_score": strict_score,
         "score_ready": boolish(row.get("signal_model_score_ready")),
         "score_source": row.get("signal_model_score_source") or None,
@@ -234,6 +369,8 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
         "target_liquidity": target_levels,
         "adverse_liquidity": adverse_levels,
         "scored_liquidity_context": scored_context,
+        "setup_levels": setup_levels_from_row(row),
+        "fvg_zones": setup_fvg_zones_from_row(row),
         "liquidity_context_status": (
             "scored_levels"
             if scored_context
@@ -457,6 +594,10 @@ def main() -> int:
                 "bucket": row.get("bucket"),
                 "permission": row.get("permission"),
                 "model_score": row.get("model_score"),
+                "raw_model_score": row.get("raw_model_score"),
+                "main_gate_pass": row.get("main_gate_pass"),
+                "strict_gate_pass": row.get("strict_gate_pass"),
+                "score_gate_suppressed": row.get("score_gate_suppressed"),
                 "strict_score": row.get("strict_score"),
                 "entry": row.get("entry"),
                 "stop": row.get("stop"),

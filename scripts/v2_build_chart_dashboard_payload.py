@@ -101,6 +101,10 @@ def compact_signal(row: Dict[str, Any]) -> Dict[str, Any]:
         "permission": row.get("permission"),
         "trade_action": row.get("trade_action"),
         "model_score": as_float(row.get("model_score")),
+        "raw_model_score": as_float(row.get("raw_model_score")),
+        "main_gate_pass": row.get("main_gate_pass"),
+        "strict_gate_pass": row.get("strict_gate_pass"),
+        "score_gate_suppressed": row.get("score_gate_suppressed"),
         "strict_score": as_float(row.get("strict_score")),
         "entry": as_float(row.get("entry")),
         "stop": as_float(row.get("stop")),
@@ -111,6 +115,8 @@ def compact_signal(row: Dict[str, Any]) -> Dict[str, Any]:
         "score_source": row.get("score_source"),
         "target_liquidity": row.get("target_liquidity") or [],
         "adverse_liquidity": row.get("adverse_liquidity") or [],
+        "setup_levels": row.get("setup_levels") or [],
+        "fvg_zones": row.get("fvg_zones") or [],
         "summary_metrics": {
             "target_liquidity_count": as_float(summary.get("target_liquidity_count")),
             "target_liquidity_score_sum": as_float(summary.get("target_liquidity_score_sum")),
@@ -248,7 +254,7 @@ def main() -> int:
         signals = [row for row in compact_signals if row.get("ticker") == ticker]
         for signal in signals:
             signal["liquidity_levels"] = liquidity_by_signal.get(signal.get("signal_id"), [])
-            signal["fvg_zones"] = enrich_fvg_zones(signal, raw_by_signal_id)
+            signal["fvg_zones"] = signal.get("fvg_zones") or enrich_fvg_zones(signal, raw_by_signal_id)
             total_liquidity += len(signal["liquidity_levels"])
         candles = load_candles(args.candles_dir, ticker, args.max_candles_per_ticker)
         total_candles += len(candles)
