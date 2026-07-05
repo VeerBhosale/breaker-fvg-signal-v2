@@ -203,6 +203,13 @@
       background: #0b0e11;
     }
 
+    .fvg-zone-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
     .chart-error {
       position: absolute;
       inset: 12px;
@@ -690,6 +697,9 @@
       chart: null,
       candleSeries: null,
       lineSeries: [],
+      structureSeries: [],
+      structureZones: [],
+      overlayFrame: null,
       markersVisible: true,
       rollingVisible: false,
       rangeVisible: true,
@@ -814,7 +824,11 @@
           width: Math.max(1, chartEl.clientWidth),
           height: Math.max(320, chartEl.clientHeight),
         });
+        scheduleOverlayUpdate();
       }).observe(chartEl);
+      if (state.chart.timeScale().subscribeVisibleTimeRangeChange) {
+        state.chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlayUpdate);
+      }
     }
 
     function loadTickerList() {
@@ -908,6 +922,10 @@
     function clearLines() {
       state.lineSeries.forEach(series => state.chart.removeSeries(series));
       state.lineSeries = [];
+      state.structureSeries.forEach(series => state.chart.removeSeries(series));
+      state.structureSeries = [];
+      state.structureZones.forEach(zone => zone.remove());
+      state.structureZones = [];
     }
 
     function addPriceLine(price, color, title, style = LightweightCharts.LineStyle.Solid) {
@@ -962,6 +980,43 @@
       return best;
     }
 
+    function timeFitsCurrentTicker(time) {
+      const candles = state.ticker?.candles || [];
+      const t = Number(time);
+      if (!candles.length || !Number.isFinite(t)) return false;
+      return t >= Number(candles[0].t) && t <= Number(candles[candles.length - 1].t);
+    }
+
+    function priceFitsCurrentTicker(price) {
+      const candles = state.ticker?.candles || [];
+      const p = Number(price);
+      if (!candles.length || !Number.isFinite(p)) return false;
+      let minLow = Infinity;
+      let maxHigh = -Infinity;
+      candles.forEach(candle => {
+        const low = Number(candle.l);
+        const high = Number(candle.h);
+        if (Number.isFinite(low)) minLow = Math.min(minLow, low);
+        if (Number.isFinite(high)) maxHigh = Math.max(maxHigh, high);
+      });
+      if (!Number.isFinite(minLow) || !Number.isFinite(maxHigh)) return false;
+      const range = Math.max(maxHigh - minLow, Math.abs(maxHigh) * 0.02, 1);
+      const pad = range * 0.25;
+      return p >= minLow - pad && p <= maxHigh + pad;
+    }
+
+    function updateStructureOverlays() {
+      state.structureZones.forEach(zone => zone._update && zone._update());
+    }
+
+    function scheduleOverlayUpdate() {
+      if (state.overlayFrame) return;
+      state.overlayFrame = requestAnimationFrame(() => {
+        state.overlayFrame = null;
+        updateStructureOverlays();
+      });
+    }
+
     function addLevelSegment(level, color, title, style = LightweightCharts.LineStyle.Dotted) {
       const numeric = Number(level && level.price);
       if (!Number.isFinite(numeric)) return;
@@ -1000,6 +1055,275 @@
         size: 1,
       }]);
       state.lineSeries.push(series);
+    }
+
+    function addStructureLevelSegment(startTime, endTime, price, color, title, lineWidth, lineStyle) {
+      const numeric = Number(price);
+      let start = Number(startTime);
+      let end = Number(endTime);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(numeric)) return;
+      if (end <= start) return;
+      if (!timeFitsCurrentTicker(start) || !timeFitsCurrentTicker(end)) return;
+      if (!priceFitsCurrentTicker(numeric)) return;
+      const series = state.chart.addLineSeries({
+        color,
+        lineWidth,
+        lineStyle,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      series.setData([
+        { time: start, value: numeric },
+        { time: end, value: numeric },
+      ]);
+      series.setMarkers([{
+        time: end,
+        position: "inBar",
+        color,
+        shape: "circle",
+        text: title,
+        size: 1,
+      }]);
+      state.structureSeries.push(series);
+    }
+
+    function addOriginalFvgZone(startTime, endTime, lower, upper, colors) {
+      if (!timeFitsCurrentTicker(startTime) || !timeFitsCurrentTicker(endTime)) return;
+      if (!priceFitsCurrentTicker(lower) || !priceFitsCurrentTicker(upper)) return;
+      const chartEl = document.getElementById("chart");
+      const zone = document.createElement("canvas");
+      zone.className = "fvg-zone-canvas";
+      chartEl.appendChild(zone);
+      state.structureZones.push(zone);
+
+      zone._update = () => {
+        const width = chartEl.clientWidth;
+        const height = chartEl.clientHeight;
+        const dpr = window.devicePixelRatio || 1;
+        if (zone.width !== Math.floor(width * dpr) || zone.height !== Math.floor(height * dpr)) {
+          zone.width = Math.floor(width * dpr);
+          zone.height = Math.floor(height * dpr);
+          zone.style.width = `${width}px`;
+          zone.style.height = `${height}px`;
+        }
+        const ctx = zone.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        const x1 = state.chart.timeScale().timeToCoordinate(Number(startTime));
+        const x2 = state.chart.timeScale().timeToCoordinate(Number(endTime));
+        const yUpper = state.candleSeries.priceToCoordinate(Number(upper));
+        const yLower = state.candleSeries.priceToCoordinate(Number(lower));
+        if ([x1, x2, yUpper, yLower].some(value => value === null || value === undefined)) return;
+
+        const left = Math.max(0, Math.min(width, Math.min(x1, x2)));
+        const right = Math.max(0, Math.min(width, Math.max(x1, x2)));
+        const top = Math.max(0, Math.min(height, Math.min(yUpper, yLower)));
+        const bottom = Math.max(0, Math.min(height, Math.max(yUpper, yLower)));
+        if (right - left < 2 || bottom - top < 2) return;
+
+        ctx.fillStyle = colors.fill;
+        ctx.strokeStyle = colors.stroke;
+        ctx.lineWidth = 1;
+        ctx.fillRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+        ctx.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+      };
+      zone._update();
+    }
+
+    function addLiquidityBandsCanvas(clusters, endTime, prefix, colors) {
+      if (!clusters.length) return;
+      const chartEl = document.getElementById("chart");
+      const canvas = document.createElement("canvas");
+      canvas.className = "fvg-zone-canvas";
+      chartEl.appendChild(canvas);
+      state.structureZones.push(canvas);
+
+      canvas._update = () => {
+        const width = chartEl.clientWidth;
+        const height = chartEl.clientHeight;
+        const dpr = window.devicePixelRatio || 1;
+        if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+          canvas.width = Math.floor(width * dpr);
+          canvas.height = Math.floor(height * dpr);
+          canvas.style.width = `${width}px`;
+          canvas.style.height = `${height}px`;
+        }
+
+        const ctx = canvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        ctx.font = "11px Inter, Segoe UI, Arial, sans-serif";
+        ctx.textBaseline = "top";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 4]);
+
+        clusters.forEach(cluster => {
+          const startTime = Number(cluster.oldest_time);
+          const clusterEndTime = Number(cluster.end_time || endTime);
+          const lower = Number(cluster.visual_lower ?? cluster.lower);
+          const upper = Number(cluster.visual_upper ?? cluster.upper);
+          if (!Number.isFinite(startTime) || !Number.isFinite(clusterEndTime) || !Number.isFinite(lower) || !Number.isFinite(upper)) return;
+          const x1 = state.chart.timeScale().timeToCoordinate(startTime);
+          const x2 = state.chart.timeScale().timeToCoordinate(clusterEndTime);
+          const yUpper = state.candleSeries.priceToCoordinate(upper);
+          const yLower = state.candleSeries.priceToCoordinate(lower);
+          if ([x1, x2, yUpper, yLower].some(value => value === null || value === undefined)) return;
+
+          const left = Math.max(0, Math.min(width, Math.min(x1, x2)));
+          const right = Math.max(0, Math.min(width, Math.max(x1, x2)));
+          const top = Math.max(0, Math.min(height, Math.min(yUpper, yLower)));
+          const bottom = Math.max(0, Math.min(height, Math.max(yUpper, yLower)));
+          if (right - left < 2 || bottom - top < 2) return;
+
+          ctx.fillStyle = cluster.active ? colors.activeFill : colors.historicalFill;
+          ctx.strokeStyle = cluster.active ? colors.activeStroke : colors.historicalStroke;
+          ctx.fillRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+          ctx.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+
+          const label = `${prefix} x${cluster.level_count}`;
+          const textWidth = ctx.measureText(label).width;
+          const textX = Math.max(left + 4, right - textWidth - 4);
+          ctx.fillStyle = colors.label;
+          ctx.fillText(label, textX, Math.max(2, top + 3));
+        });
+        ctx.setLineDash([]);
+      };
+
+      canvas._update();
+    }
+
+    function renderOriginalStructure() {
+      if (!state.ticker || !state.structureVisible) return;
+      const ledgers = state.ticker.level_ledgers || {};
+      const mergedFvgZones = state.ticker.merged_fvg_zones || {};
+      const candles = state.ticker.candles || [];
+      const endTime = Number(candles.at(-1)?.t || 0);
+      if (!endTime) return;
+
+      const clusters = state.ticker.liquidity_clusters || {};
+      const isVisibleLiquidityBand = cluster => {
+        const levelCount = Number(cluster.level_count || 0);
+        const fvgBackedCount = Number(cluster.fvg_backed_count || 0);
+        if (levelCount > 1) return true;
+        return fvgBackedCount > 0;
+      };
+      const compareLiquidityBands = (a, b) => {
+        const multiLevelA = Number(a.level_count || 0) > 1 ? 1 : 0;
+        const multiLevelB = Number(b.level_count || 0) > 1 ? 1 : 0;
+        if (multiLevelA !== multiLevelB) return multiLevelB - multiLevelA;
+        if (Number(a.level_count || 0) !== Number(b.level_count || 0)) return Number(b.level_count || 0) - Number(a.level_count || 0);
+        if (Boolean(a.active) !== Boolean(b.active)) return Number(Boolean(b.active)) - Number(Boolean(a.active));
+        if (Number(a.fvg_backed_count || 0) !== Number(b.fvg_backed_count || 0)) return Number(b.fvg_backed_count || 0) - Number(a.fvg_backed_count || 0);
+        return Number(b.density || 0) - Number(a.density || 0);
+      };
+      const visibleSellClusters = (clusters.sell || []).filter(isVisibleLiquidityBand).sort(compareLiquidityBands);
+      const visibleBuyClusters = (clusters.buy || []).filter(isVisibleLiquidityBand).sort(compareLiquidityBands);
+      const overlapsCluster = (level, clusterList) => {
+        const price = Number(level.price);
+        if (!Number.isFinite(price)) return false;
+        const levelTime = Number(level.time || level.source_time || 0);
+        return clusterList.some(cluster => {
+          const clusterEnd = Number(cluster.end_time || endTime);
+          if (levelTime && clusterEnd && levelTime > clusterEnd) return false;
+          const lower = Number(cluster.visual_lower ?? cluster.lower);
+          const upper = Number(cluster.visual_upper ?? cluster.upper);
+          return price >= lower && price <= upper;
+        });
+      };
+      const dedupeLevels = (levels) => {
+        const sorted = [...levels]
+          .filter(level => level.price !== null && level.price !== undefined)
+          .sort((a, b) => {
+            if (a.price !== b.price) return a.price - b.price;
+            return (a.confirmation_time || a.time || a.source_time || 0) - (b.confirmation_time || b.time || b.source_time || 0);
+          });
+        const output = [];
+        sorted.forEach(level => {
+          const price = Number(level.price);
+          const tolerance = Math.max(Math.abs(price) * 0.0008, 0.05);
+          const existing = output.find(item => Math.abs(Number(item.price) - price) <= tolerance);
+          if (!existing) {
+            output.push(level);
+            return;
+          }
+          const existingRank = existing.type === "ISL" || existing.type === "ISH" ? 2 : 1;
+          const levelRank = level.type === "ISL" || level.type === "ISH" ? 2 : 1;
+          if (levelRank > existingRank || (levelRank === existingRank && (level.age_bars || 0) > (existing.age_bars || 0))) {
+            Object.assign(existing, level);
+          }
+        });
+        return output;
+      };
+
+      [
+        ["visual_sell_levels", "#00d09c", 1, visibleSellClusters],
+        ["visual_buy_levels", "#ff5c5c", 1, visibleBuyClusters],
+      ].forEach(([key, color, lineStyle, clusterList]) => {
+        dedupeLevels(ledgers[key] || [])
+          .filter(level => !overlapsCluster(level, clusterList))
+          .sort((a, b) => {
+            const rankA = a.type === "ISL" || a.type === "ISH" ? 2 : 1;
+            const rankB = b.type === "ISL" || b.type === "ISH" ? 2 : 1;
+            if (rankA !== rankB) return rankB - rankA;
+            return (b.age_bars || 0) - (a.age_bars || 0);
+          })
+          .slice(0, 12)
+          .forEach(level => {
+            const time = Number(level.source_time || level.time);
+            const price = Number(level.price);
+            if (!time || !Number.isFinite(price) || endTime <= time) return;
+            const isIntermediate = level.type === "ISL" || level.type === "ISH";
+            const label = isIntermediate ? level.type : `${level.type}-FVG`;
+            addStructureLevelSegment(time, endTime, price, color, label, isIntermediate ? 2 : 1, lineStyle);
+          });
+      });
+
+      [...(mergedFvgZones.bullish || [])]
+        .sort((a, b) => Number(a.start_time || 0) - Number(b.start_time || 0))
+        .forEach(zone => addOriginalFvgZone(
+          zone.start_time,
+          endTime,
+          zone.lower,
+          zone.upper,
+          { fill: "rgba(38, 166, 154, 0.10)", stroke: "rgba(38, 166, 154, 0.48)" },
+        ));
+      [...(mergedFvgZones.bearish || [])]
+        .sort((a, b) => Number(a.start_time || 0) - Number(b.start_time || 0))
+        .forEach(zone => addOriginalFvgZone(
+          zone.start_time,
+          endTime,
+          zone.lower,
+          zone.upper,
+          { fill: "rgba(239, 83, 80, 0.09)", stroke: "rgba(239, 83, 80, 0.44)" },
+        ));
+
+      addLiquidityBandsCanvas(visibleSellClusters, endTime, "SSL", {
+        activeFill: "rgba(38, 166, 154, 0.035)",
+        activeStroke: "rgba(38, 166, 154, 0.72)",
+        historicalFill: "rgba(38, 166, 154, 0.018)",
+        historicalStroke: "rgba(38, 166, 154, 0.34)",
+        label: "#00d09c",
+      });
+      addLiquidityBandsCanvas(visibleBuyClusters, endTime, "BSL", {
+        activeFill: "rgba(239, 83, 80, 0.03)",
+        activeStroke: "rgba(239, 83, 80, 0.68)",
+        historicalFill: "rgba(239, 83, 80, 0.016)",
+        historicalStroke: "rgba(239, 83, 80, 0.32)",
+        label: "#ff5c5c",
+      });
+
+      window.__structureDebug = {
+        ticker: state.ticker.ticker,
+        visualSellLevels: (ledgers.visual_sell_levels || []).length,
+        visualBuyLevels: (ledgers.visual_buy_levels || []).length,
+        visibleSellClusters: visibleSellClusters.length,
+        visibleBuyClusters: visibleBuyClusters.length,
+        structureSeries: state.structureSeries.length,
+        structureZones: state.structureZones.length,
+      };
+      scheduleOverlayUpdate();
     }
 
     function signalSegmentEnd(signal, bars = 14) {
@@ -1080,12 +1404,9 @@
         });
       }
       if (state.structureVisible) {
-        (state.signal.liquidity_levels || []).forEach((level) => {
-          const role = String(level.role || "");
-          const color = role === "target_side" ? "#26a69a" : role === "stop_or_swept_side" ? "#ef5350" : "#9ca3af";
-          addSemanticLevel(level, color, levelLabel(level, role));
-        });
+        renderOriginalStructure();
       }
+      scheduleOverlayUpdate();
     }
 
     function renderSignals() {
