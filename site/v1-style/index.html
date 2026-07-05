@@ -675,7 +675,13 @@
   </div>
 
   <script>
-    const DATA_URL = "../chart/data/chart_payload.json";
+    const REPO_BASE = (() => {
+      const parts = window.location.pathname.split("/").filter(Boolean);
+      const repoIndex = parts.indexOf("breaker-fvg-signal-v2");
+      if (repoIndex >= 0) return `/${parts.slice(0, repoIndex + 1).join("/")}`;
+      return "";
+    })();
+    const DATA_URL = `${REPO_BASE}/chart/data/chart_payload.json`;
     const state = {
       payload: null,
       tickers: [],
