@@ -20,6 +20,26 @@
     }
 
     * { box-sizing: border-box; }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #3a4653 #0d1117;
+    }
+    *::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    *::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+    *::-webkit-scrollbar-thumb {
+      background: #3a4653;
+      border: 2px solid #0d1117;
+      border-radius: 999px;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background: #53616e;
+    }
+
     body {
       margin: 0;
       background: var(--bg);
@@ -32,8 +52,20 @@
 
     .app {
       display: grid;
-      grid-template-columns: 300px minmax(0, 1fr) 380px;
+      grid-template-columns: 300px minmax(0, 1fr) 360px;
       height: 100vh;
+    }
+
+    .app.left-collapsed {
+      grid-template-columns: 0 minmax(0, 1fr) 360px;
+    }
+
+    .app.right-collapsed {
+      grid-template-columns: 300px minmax(0, 1fr) 0;
+    }
+
+    .app.left-collapsed.right-collapsed {
+      grid-template-columns: 0 minmax(0, 1fr) 0;
     }
 
     aside, .details {
@@ -59,6 +91,17 @@
       overflow: hidden;
     }
 
+    .app.left-collapsed aside,
+    .app.right-collapsed .details {
+      border: 0;
+      overflow: visible;
+    }
+
+    .app.left-collapsed aside > *,
+    .app.right-collapsed .details > * {
+      display: none;
+    }
+
     .topbar {
       height: 56px;
       border-bottom: 1px solid var(--line);
@@ -68,6 +111,11 @@
       gap: 10px;
       padding: 0 16px;
       background: #0f141a;
+    }
+
+    .chart-shell > .topbar {
+      background: rgba(15, 20, 26, 0.94);
+      backdrop-filter: blur(12px);
     }
 
     h1, h2, h3, p { margin: 0; }
@@ -171,11 +219,23 @@
       font-size: 13px;
     }
 
+    .toolbar,
     .chart-actions {
       display: flex;
       align-items: center;
       gap: 8px;
       min-width: 0;
+    }
+
+    .bias-pill {
+      border: 1px solid #2c3642;
+      border-radius: 999px;
+      color: #9fb0bf;
+      background: #10151c;
+      font-size: 11px;
+      line-height: 1;
+      padding: 7px 9px;
+      white-space: nowrap;
     }
 
     button {
@@ -194,6 +254,39 @@
       background: #1c2732;
     }
 
+    button.active {
+      border-color: var(--accent);
+      color: #e7fff8;
+      background: #16342e;
+    }
+
+    .panel-toggle {
+      position: fixed;
+      top: 12px;
+      z-index: 30;
+      width: 28px;
+      height: 44px;
+      padding: 0;
+      border-radius: 999px;
+      background: #151b23;
+      color: #c9d4df;
+      border: 1px solid #2c3642;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1;
+      transition: left 160ms ease, right 160ms ease, background 120ms ease, border-color 120ms ease;
+    }
+
+    .panel-toggle.left { left: 286px; }
+    .panel-toggle.right { right: 346px; }
+    .app.left-collapsed .panel-toggle.left { left: 10px; }
+    .app.right-collapsed .panel-toggle.right { right: 10px; }
+    .app.left-collapsed .panel-toggle.left::before { content: ">"; }
+    .app:not(.left-collapsed) .panel-toggle.left::before { content: "<"; }
+    .app.right-collapsed .panel-toggle.right::before { content: "<"; }
+    .app:not(.right-collapsed) .panel-toggle.right::before { content: ">"; }
+
     .details-body {
       flex: 1;
       min-height: 0;
@@ -201,9 +294,15 @@
       padding: 12px;
     }
 
+    .section {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 14px;
+      margin-bottom: 14px;
+    }
+
     .probability-meter, .trade-system-panel, .panel {
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 6px;
       background: var(--panel-2);
       padding: 12px;
       margin-bottom: 12px;
@@ -237,20 +336,54 @@
 
     .meter-arc {
       position: relative;
-      height: 48px;
-      border-radius: 48px 48px 0 0;
+      height: 96px;
       overflow: hidden;
-      background: linear-gradient(90deg, rgba(239, 83, 80, 0.72), rgba(249, 168, 37, 0.72), rgba(38, 166, 154, 0.72));
+      border-bottom: 1px solid #2b343f;
+      background: transparent;
+    }
+
+    .meter-band {
+      position: absolute;
+      left: 50%;
+      bottom: -80px;
+      width: 176px;
+      height: 176px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background: conic-gradient(from 270deg, #ef5350 0deg 60deg, #f9a825 60deg 120deg, #26a69a 120deg 180deg, transparent 180deg 360deg);
+    }
+
+    .meter-band::after {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border-radius: 50%;
+      background: var(--panel-2);
     }
 
     .meter-needle {
       position: absolute;
       left: 50%;
       bottom: 0;
-      width: 2px;
-      height: 46px;
-      background: #fff;
+      width: 3px;
+      height: 84px;
+      background: #e8eef4;
+      border-radius: 999px;
       transform-origin: 50% 100%;
+      transform: translateX(-50%) rotate(-90deg);
+      box-shadow: 0 0 8px rgba(232, 238, 244, 0.35);
+    }
+
+    .meter-needle::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -5px;
+      width: 11px;
+      height: 11px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background: #e8eef4;
     }
 
     .meter-labels {
@@ -261,6 +394,7 @@
       margin-top: 5px;
     }
 
+    .trade-system-head,
     .trade-head {
       display: flex;
       justify-content: space-between;
@@ -285,6 +419,57 @@
     .pill.good { color: var(--accent); border-color: rgba(38, 166, 154, 0.5); }
     .pill.bad { color: var(--danger); border-color: rgba(239, 83, 80, 0.5); }
     .pill.warn { color: var(--warn); border-color: rgba(249, 168, 37, 0.5); }
+
+    .trade-system-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+
+    .trade-system-source {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+      line-height: 1.35;
+    }
+
+    .trade-system-badge {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--text);
+      font-size: 10px;
+      font-weight: 800;
+      padding: 4px 8px;
+      white-space: nowrap;
+      text-transform: uppercase;
+    }
+
+    .trade-system-badge.take {
+      border-color: rgba(38, 166, 154, 0.65);
+      color: #6ff3df;
+    }
+
+    .trade-system-badge.reject {
+      border-color: rgba(239, 83, 80, 0.65);
+      color: #ff9a97;
+    }
+
+    .trade-system-badge.neutral {
+      border-color: rgba(249, 168, 37, 0.65);
+      color: #ffd47c;
+    }
+
+    .audit-note {
+      margin-top: 10px;
+      padding: 9px;
+      border: 1px solid rgba(249, 168, 37, 0.35);
+      border-radius: 6px;
+      background: rgba(249, 168, 37, 0.08);
+      color: #ffd47c;
+      font-size: 11px;
+      line-height: 1.4;
+    }
 
     .metric-grid {
       display: grid;
@@ -370,26 +555,58 @@
       margin-top: 4px;
     }
 
-    @media (max-width: 1100px) {
-      body { overflow: auto; }
-      .app {
-        grid-template-columns: 1fr;
-        height: auto;
+    @media (min-width: 761px) and (max-width: 1100px) {
+      .app { grid-template-columns: 240px minmax(0, 1fr); }
+      .details { display: none; }
+    }
+
+    @media (max-width: 760px) {
+      body { height: 100dvh; }
+      .app,
+      .app.left-collapsed,
+      .app.right-collapsed,
+      .app.left-collapsed.right-collapsed {
+        grid-template-columns: minmax(0, 1fr);
+        height: 100dvh;
       }
-      aside, .details, .chart-shell {
-        height: auto;
-        min-height: 420px;
+      aside, .details {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        z-index: 20;
+        width: min(88vw, 340px);
+        height: 100dvh;
+        box-shadow: 0 18px 48px rgba(0,0,0,.48);
       }
-      #chart { height: 560px; }
+      aside { left: 0; border-right: 1px solid var(--line); }
+      .details { right: 0; border-left: 1px solid var(--line); }
+      .chart-shell { height: 100dvh; }
+      .app:not(.left-collapsed) .chart-shell,
+      .app:not(.right-collapsed) .chart-shell {
+        pointer-events: none;
+      }
+      .app.left-collapsed aside,
+      .app.right-collapsed .details {
+        transform: translateX(-105%);
+      }
+      .app.right-collapsed .details {
+        transform: translateX(105%);
+      }
+      .panel-toggle.left { left: 10px; }
+      .panel-toggle.right { right: 10px; }
+      .topbar { padding: 0 12px; }
+      .toolbar { gap: 5px; overflow-x: auto; }
     }
   </style>
 </head>
 <body>
-  <div class="app">
+  <div class="app" id="app">
+    <button class="panel-toggle left" id="leftPanelBtn" title="Toggle watchlist" aria-label="Toggle watchlist"></button>
+    <button class="panel-toggle right" id="rightPanelBtn" title="Toggle details" aria-label="Toggle details"></button>
     <aside>
       <div class="topbar">
         <div>
-          <h1>V2 Watchlist</h1>
+          <h1>Breaker+FVG V2</h1>
           <p class="sub" id="leftSummary">Loading...</p>
         </div>
       </div>
@@ -405,10 +622,14 @@
           <h1 id="chartTitle">Select a ticker</h1>
           <p class="sub" id="chartSubtitle"></p>
         </div>
-        <div class="chart-actions">
-          <button id="levelsBtn" class="active">Levels</button>
-          <button id="lastSignalBtn">Last signal</button>
+        <div class="toolbar">
+          <button id="rollingLevelsBtn" title="Toggle ranked target/adverse levels">ISL/ISH</button>
+          <button id="rangesBtn" title="Toggle entry, stop, and 2R lines">Ranges</button>
+          <button id="structureBtn" title="Toggle scored liquidity topology">Structure</button>
+          <button id="skeletonBtn" title="Toggle signal markers">Skeleton</button>
+          <span class="bias-pill" id="skeletonBias">Model: n/a</span>
           <button id="fitBtn">Fit</button>
+          <button id="lastSignalBtn">Last signal</button>
           <a class="pill" href="../">Ranker</a>
           <a class="pill" href="../chart/">New chart</a>
         </div>
@@ -419,19 +640,22 @@
     <section class="details">
       <div class="topbar">
         <div>
-          <h1>Signal Detail</h1>
+          <h1>Signal Details</h1>
           <p class="sub" id="signalSummary">No signal selected</p>
         </div>
       </div>
       <div class="details-body">
-        <div id="tradeSystemPanel"></div>
-        <div id="meterPanel"></div>
-        <div class="panel">
-          <h3>Signals</h3>
+        <div class="section">
+          <h2>Selected Signal</h2>
+          <div id="tradeSystemPanel"></div>
+          <div id="meterPanel"></div>
+        </div>
+        <div class="section">
+          <h2>Signals</h2>
           <div class="signal-list" id="signals"></div>
         </div>
-        <div class="panel">
-          <h3>Scored Liquidity</h3>
+        <div class="section">
+          <h2>Scored Liquidity</h2>
           <div id="levelsList"></div>
         </div>
       </div>
@@ -448,7 +672,10 @@
       chart: null,
       candleSeries: null,
       lineSeries: [],
-      levelsVisible: true
+      markersVisible: true,
+      rollingVisible: false,
+      rangeVisible: true,
+      structureVisible: true
     };
 
     const el = {
@@ -463,7 +690,12 @@
       meterPanel: document.getElementById("meterPanel"),
       signals: document.getElementById("signals"),
       levelsList: document.getElementById("levelsList"),
-      levelsBtn: document.getElementById("levelsBtn")
+      rollingLevelsBtn: document.getElementById("rollingLevelsBtn"),
+      rangesBtn: document.getElementById("rangesBtn"),
+      structureBtn: document.getElementById("structureBtn"),
+      skeletonBtn: document.getElementById("skeletonBtn"),
+      skeletonBias: document.getElementById("skeletonBias"),
+      app: document.getElementById("app")
     };
 
     function fmt(value, digits = 2) {
@@ -586,20 +818,35 @@
         close: c.c
       }));
       state.candleSeries.setData(candleData);
-      const markers = state.ticker.signals.map((signal, index) => ({
-        time: signal.decision_time,
-        position: signal.direction === "short" ? "aboveBar" : "belowBar",
-        color: signal.permission === "yes" ? "#26a69a" : "#f9a825",
-        shape: signal.direction === "short" ? "arrowDown" : "arrowUp",
-        text: `${index + 1} ${signal.bucket || ""}`.trim(),
-      }));
-      state.candleSeries.setMarkers(markers);
+      renderMarkers();
       el.chartTitle.textContent = state.ticker.ticker;
       el.chartSubtitle.textContent = `${state.ticker.signals.length} V2 model signals`;
+      const buckets = state.ticker.signals.reduce((acc, signal) => {
+        const key = signal.bucket || "n/a";
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+      el.skeletonBias.textContent = Object.entries(buckets).map(([key, value]) => `${key}: ${value}`).join(" | ") || "Model: n/a";
       renderSignals();
       renderSignalDetail();
       focusSignal(state.signal);
       state.chart.timeScale().fitContent();
+    }
+
+    function renderMarkers() {
+      if (!state.ticker || !state.candleSeries) return;
+      if (!state.markersVisible) {
+        state.candleSeries.setMarkers([]);
+        return;
+      }
+      const markers = state.ticker.signals.map((signal, index) => ({
+        time: signal.decision_time,
+        position: signal.direction === "short" ? "aboveBar" : "belowBar",
+        color: signal.permission === "yes" ? "#26a69a" : (signal.bucket === "reject" ? "#ef5350" : "#f9a825"),
+        shape: signal.direction === "short" ? "arrowDown" : "arrowUp",
+        text: `${index + 1} ${signal.bucket || ""}`.trim(),
+      }));
+      state.candleSeries.setMarkers(markers);
     }
 
     function clearLines() {
@@ -636,19 +883,31 @@
 
     function renderLines() {
       clearLines();
-      if (!state.signal || !state.levelsVisible) return;
-      addPriceLine(state.signal.entry, "#2962ff", "Entry");
-      addPriceLine(state.signal.stop, "#ef5350", "Stop", LightweightCharts.LineStyle.Dashed);
-      if (Number.isFinite(Number(state.signal.entry)) && Number.isFinite(Number(state.signal.risk))) {
+      if (!state.signal) return;
+      if (state.rangeVisible) {
+        addPriceLine(state.signal.entry, "#2962ff", "Entry");
+        addPriceLine(state.signal.stop, "#ef5350", "Stop", LightweightCharts.LineStyle.Dashed);
+      }
+      if (state.rangeVisible && Number.isFinite(Number(state.signal.entry)) && Number.isFinite(Number(state.signal.risk))) {
         const direction = state.signal.direction === "short" ? -1 : 1;
         addPriceLine(Number(state.signal.entry) + direction * 2 * Number(state.signal.risk), "#f9a825", "2R", LightweightCharts.LineStyle.Dashed);
       }
-      (state.signal.target_liquidity || []).forEach((level, idx) => {
-        addPriceLine(level.price, "#26a69a", `BSL ${idx + 1} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
-      });
-      (state.signal.adverse_liquidity || []).forEach((level, idx) => {
-        addPriceLine(level.price, "#ef5350", `SSL ${idx + 1} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
-      });
+      if (state.rollingVisible) {
+        (state.signal.target_liquidity || []).forEach((level, idx) => {
+          addPriceLine(level.price, "#26a69a", `Target ${idx + 1} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
+        });
+        (state.signal.adverse_liquidity || []).forEach((level, idx) => {
+          addPriceLine(level.price, "#ef5350", `Adverse ${idx + 1} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
+        });
+      }
+      if (state.structureVisible) {
+        (state.signal.liquidity_levels || []).forEach((level, idx) => {
+          const role = String(level.role || "");
+          const color = role === "target_side" ? "#26a69a" : role === "stop_or_swept_side" ? "#ef5350" : "#9ca3af";
+          const side = level.side || "LQ";
+          addPriceLine(level.price, color, `${side} D${level.decile || "-"} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
+        });
+      }
     }
 
     function renderSignals() {
@@ -685,16 +944,23 @@
       }
       el.signalSummary.textContent = fmtTime(s.decision_time);
       const summary = s.summary_metrics || {};
+      const payloadSummary = state.payload.summary || {};
+      const rejectCount = (payloadSummary.bucket_counts && payloadSummary.bucket_counts.reject) || 0;
+      const signalCount = payloadSummary.signal_count || 0;
       const probability = signalProbability(s);
       const angle = -90 + Math.max(0, Math.min(1, probability.probability)) * 180;
+      const badgeClass = s.permission === "yes" ? "take" : s.bucket === "reject" ? "reject" : "neutral";
+      const auditNote = signalCount && rejectCount === signalCount
+        ? `Current hosted payload audit: ${rejectCount}/${signalCount} decisions are reject. The approved scorer set score to 0 because this run had 0 long rows passing the artifact main gate; this is not a dashboard display bug.`
+        : `Current hosted payload: ${signalCount} decisions, reject count ${rejectCount}.`;
       el.tradeSystemPanel.innerHTML = `
         <div class="trade-system-panel">
-          <div class="trade-head">
+          <div class="trade-system-head">
             <div>
-              <h2>TRADE RANKER</h2>
-              <p class="sub">${s.score_source || "model_artifacts"} | ${s.reason || ""}</p>
+              <div class="trade-system-title">TRADE RANKER</div>
+              <div class="trade-system-source">${s.score_source || "model_artifacts"} | ${s.reason || ""}</div>
             </div>
-            <span class="pill ${pillClass(s.bucket)}">${s.bucket || "n/a"}</span>
+            <span class="trade-system-badge ${badgeClass}">${s.bucket || "n/a"}</span>
           </div>
           <div class="metric-grid">
             ${metric("System", s.trade_action || "n/a")}
@@ -704,6 +970,7 @@
             ${metric("Stop", fmt(s.stop, 2))}
             ${metric("Risk %", fmtPct(s.risk_pct_of_entry, 2))}
           </div>
+          <div class="audit-note">${auditNote}</div>
         </div>
       `;
       el.meterPanel.innerHTML = `
@@ -716,6 +983,7 @@
             <div class="meter-value">${fmtPct(probability.probability, 1)}</div>
           </div>
           <div class="meter-arc">
+            <div class="meter-band"></div>
             <div class="meter-needle" style="transform: translateX(-50%) rotate(${angle}deg);"></div>
           </div>
           <div class="meter-labels"><span>Reject</span><span>Neutral</span><span>High</span></div>
@@ -785,10 +1053,34 @@
     el.searchInput.addEventListener("input", renderWatchlist);
     document.getElementById("fitBtn").addEventListener("click", () => state.chart && state.chart.timeScale().fitContent());
     document.getElementById("lastSignalBtn").addEventListener("click", () => focusSignal(state.signal));
-    el.levelsBtn.addEventListener("click", () => {
-      state.levelsVisible = !state.levelsVisible;
-      el.levelsBtn.classList.toggle("active", state.levelsVisible);
+    el.rollingLevelsBtn.addEventListener("click", () => {
+      state.rollingVisible = !state.rollingVisible;
+      el.rollingLevelsBtn.classList.toggle("active", state.rollingVisible);
       renderLines();
+    });
+    el.rangesBtn.classList.toggle("active", state.rangeVisible);
+    el.rangesBtn.addEventListener("click", () => {
+      state.rangeVisible = !state.rangeVisible;
+      el.rangesBtn.classList.toggle("active", state.rangeVisible);
+      renderLines();
+    });
+    el.structureBtn.classList.toggle("active", state.structureVisible);
+    el.structureBtn.addEventListener("click", () => {
+      state.structureVisible = !state.structureVisible;
+      el.structureBtn.classList.toggle("active", state.structureVisible);
+      renderLines();
+    });
+    el.skeletonBtn.classList.toggle("active", state.markersVisible);
+    el.skeletonBtn.addEventListener("click", () => {
+      state.markersVisible = !state.markersVisible;
+      el.skeletonBtn.classList.toggle("active", state.markersVisible);
+      renderMarkers();
+    });
+    document.getElementById("leftPanelBtn").addEventListener("click", () => {
+      el.app.classList.toggle("left-collapsed");
+    });
+    document.getElementById("rightPanelBtn").addEventListener("click", () => {
+      el.app.classList.toggle("right-collapsed");
     });
 
     boot().catch(error => {
