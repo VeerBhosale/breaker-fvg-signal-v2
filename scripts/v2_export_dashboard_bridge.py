@@ -326,6 +326,21 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
     stop = to_float(row.get("stop_price"))
     decision_time = to_int(row.get("decision_time"))
     reason = row.get("tds_reason") or row.get("reason_codes") or row.get("_v2_block_reason") or None
+    main_gate_failures = row.get("main_gate_failures") or None
+    strict_gate_failures = row.get("strict_gate_failures") or None
+    score_gate_suppressed = (
+        raw_model_score is not None
+        and score is not None
+        and score == 0
+        and main_gate_pass is False
+    )
+    rejection_detail = None
+    if score_gate_suppressed and main_gate_failures:
+        rejection_detail = f"main_gate_failed:{main_gate_failures}"
+    elif strict_gate_pass is False and strict_gate_failures:
+        rejection_detail = f"strict_gate_failed:{strict_gate_failures}"
+    elif reason:
+        rejection_detail = str(reason)
     missing_fields = (
         row.get("tds_missing_fields")
         or row.get("missing_fields")
@@ -350,12 +365,9 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
         "raw_model_score": raw_model_score,
         "main_gate_pass": main_gate_pass,
         "strict_gate_pass": strict_gate_pass,
-        "score_gate_suppressed": (
-            raw_model_score is not None
-            and score is not None
-            and score == 0
-            and main_gate_pass is False
-        ),
+        "score_gate_suppressed": score_gate_suppressed,
+        "main_gate_failures": main_gate_failures,
+        "strict_gate_failures": strict_gate_failures,
         "strict_score": strict_score,
         "score_ready": boolish(row.get("signal_model_score_ready")),
         "score_source": row.get("signal_model_score_source") or None,
@@ -364,6 +376,7 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
         "risk": risk,
         "risk_pct_of_entry": (risk / entry) if risk is not None and entry else None,
         "reason": reason,
+        "rejection_detail": rejection_detail,
         "hard_gate_note": row.get("tds_hard_gate_note") or None,
         "missing_fields": missing_fields,
         "target_liquidity": target_levels,

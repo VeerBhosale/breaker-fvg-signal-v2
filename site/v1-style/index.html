@@ -478,6 +478,17 @@
       line-height: 1.4;
     }
 
+    .reason-list {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--text);
+    }
+
+    .reason-list li {
+      margin: 4px 0;
+      line-height: 1.35;
+    }
+
     .metric-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -732,6 +743,29 @@
       return n.toLocaleString(undefined, { maximumFractionDigits: digits });
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      }[char]));
+    }
+
+    function reasonItems(value) {
+      const text = String(value || "").trim();
+      if (!text) return "<p class=\"sub\">No detailed rejection reason exported.</p>";
+      const parts = text
+        .replace(/^main_gate_failed:/, "")
+        .replace(/^strict_gate_failed:/, "")
+        .split("|")
+        .map(part => part.trim())
+        .filter(Boolean);
+      if (!parts.length) return `<p class="sub">${escapeHtml(text)}</p>`;
+      return `<ul class="reason-list">${parts.map(part => `<li>${escapeHtml(part)}</li>`).join("")}</ul>`;
+    }
+
     function fmtPct(value, digits = 1) {
       const n = Number(value);
       if (!Number.isFinite(n)) return "n/a";
@@ -952,6 +986,34 @@
         axisLabelVisible: true,
         title,
       });
+      state.lineSeries.push(series);
+    }
+
+    function addPriceSegment(price, startTime, endTime, color, title, style = LightweightCharts.LineStyle.Solid, lineWidth = 1) {
+      const numeric = Number(price);
+      const start = Number(startTime);
+      const end = Number(endTime);
+      if (!Number.isFinite(numeric) || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+      const series = state.chart.addLineSeries({
+        color,
+        lineWidth,
+        lineStyle: style,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      series.setData([
+        { time: start, value: numeric },
+        { time: end, value: numeric },
+      ]);
+      series.setMarkers([{
+        time: end,
+        position: "inBar",
+        color,
+        shape: "circle",
+        text: title,
+        size: 1,
+      }]);
       state.lineSeries.push(series);
     }
 
@@ -1262,6 +1324,7 @@
         ["visual_buy_levels", "#ff5c5c", 1, visibleBuyClusters],
       ].forEach(([key, color, lineStyle, clusterList]) => {
         dedupeLevels(ledgers[key] || [])
+          .filter(level => level.type === "ISL" || level.type === "ISH")
           .filter(level => !overlapsCluster(level, clusterList))
           .sort((a, b) => {
             const rankA = a.type === "ISL" || a.type === "ISH" ? 2 : 1;
@@ -1332,6 +1395,17 @@
       return candleTimeAfter(anchor, bars);
     }
 
+    function signalForwardWindow(signal, bars = 14) {
+      const candles = state.ticker?.candles || [];
+      const anchor = firstFinite(signal?.signal_time, signal?.decision_time);
+      if (!candles.length || anchor === null) return null;
+      const startIndex = candles.findIndex(candle => Number(candle.t) > Number(anchor));
+      if (startIndex < 0) return null;
+      const endIndex = Math.min(candles.length - 1, startIndex + bars);
+      if (endIndex <= startIndex) return null;
+      return { start: candles[startIndex].t, end: candles[endIndex].t };
+    }
+
     function renderSetupLevels() {
       const signals = state.ticker?.signals || [];
       signals.forEach((signal) => {
@@ -1350,19 +1424,11 @@
           if (!Number.isFinite(lower) || !Number.isFinite(upper)) return;
           const startTime = firstFinite(zone.time, signal.signal_time, signal.decision_time);
           const fvgEnd = endTime || candleTimeAfter(startTime, 14);
-          const color = zone.side === "bear" ? "#ef5350" : "#26a69a";
-          addLevelSegment(
-            { price: Math.max(lower, upper), time: startTime, end_time: fvgEnd },
-            color,
-            "FVG",
-            LightweightCharts.LineStyle.Dotted
-          );
-          addLevelSegment(
-            { price: Math.min(lower, upper), time: startTime, end_time: fvgEnd },
-            color,
-            "FVG",
-            LightweightCharts.LineStyle.Dotted
-          );
+          if (!startTime || !fvgEnd) return;
+          const colors = zone.side === "bear"
+            ? { fill: "rgba(239, 83, 80, 0.08)", stroke: "rgba(239, 83, 80, 0.46)" }
+            : { fill: "rgba(38, 166, 154, 0.10)", stroke: "rgba(38, 166, 154, 0.48)" };
+          addOriginalFvgZone(startTime, fvgEnd, Math.min(lower, upper), Math.max(lower, upper), colors);
         });
       });
     }
@@ -1388,20 +1454,18 @@
         return "LQ";
       };
       if (state.rangeVisible) {
-        addPriceLine(state.signal.entry, "#2962ff", "Entry");
-        addPriceLine(state.signal.stop, "#ef5350", "Stop", LightweightCharts.LineStyle.Dashed);
+        const rangeWindow = signalForwardWindow(state.signal, 14);
+        if (rangeWindow) {
+          addPriceSegment(state.signal.entry, rangeWindow.start, rangeWindow.end, "#2962ff", "Entry", LightweightCharts.LineStyle.Solid, 1);
+          addPriceSegment(state.signal.stop, rangeWindow.start, rangeWindow.end, "#ef5350", "Stop", LightweightCharts.LineStyle.Dashed, 1);
+        }
       }
       if (state.rangeVisible && Number.isFinite(Number(state.signal.entry)) && Number.isFinite(Number(state.signal.risk))) {
         const direction = state.signal.direction === "short" ? -1 : 1;
-        addPriceLine(Number(state.signal.entry) + direction * 2 * Number(state.signal.risk), "#f9a825", "2R", LightweightCharts.LineStyle.Dashed);
-      }
-      if (state.rollingVisible) {
-        (state.signal.target_liquidity || []).forEach((level) => {
-          addSemanticLevel(level, "#26a69a", levelLabel(level, "target_side"));
-        });
-        (state.signal.adverse_liquidity || []).forEach((level) => {
-          addSemanticLevel(level, "#f9a825", levelLabel(level, "stop_or_swept_side"));
-        });
+        const rangeWindow = signalForwardWindow(state.signal, 14);
+        if (rangeWindow) {
+          addPriceSegment(Number(state.signal.entry) + direction * 2 * Number(state.signal.risk), rangeWindow.start, rangeWindow.end, "#f9a825", "2R", LightweightCharts.LineStyle.Dashed, 1);
+        }
       }
       if (state.structureVisible) {
         renderOriginalStructure();
@@ -1455,6 +1519,7 @@
       const finalScoreText = finalScore === null ? "n/a" : fmt(finalScore, 8);
       const mainGate = s.main_gate_pass ?? s.long_artifact_main_gate_pass;
       const strictGate = s.strict_gate_pass ?? s.long_artifact_strict_gate_pass;
+      const rejectionDetail = s.rejection_detail || s.main_gate_failures || s.strict_gate_failures || s.reason || s.missing_fields || "";
       const auditNote = rawScore === null
         ? `Current hosted payload has final decision scores only. Raw ungated model score is not exported yet; the next rerun must include raw score diagnostics. Hosted payload: ${signalCount} decisions, reject count ${rejectCount}.`
         : `Raw score is the ungated model probability. Final rank score is the permission score after gates and thresholds.`;
@@ -1479,6 +1544,10 @@
             ${metric("Risk %", fmtPct(s.risk_pct_of_entry, 2))}
           </div>
           <div class="audit-note">${auditNote}</div>
+          <div class="audit-note">
+            <strong>Rejection reasoning</strong>
+            ${reasonItems(rejectionDetail)}
+          </div>
         </div>
       `;
       el.meterPanel.innerHTML = `
