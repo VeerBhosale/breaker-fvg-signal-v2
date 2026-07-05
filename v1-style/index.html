@@ -497,6 +497,18 @@
       overflow-wrap: anywhere;
     }
 
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .metric strong {
+      font-size: 13px;
+      word-break: break-word;
+    }
+
     .signal-list {
       display: grid;
       gap: 8px;
@@ -606,7 +618,7 @@
     <aside>
       <div class="topbar">
         <div>
-          <h1>Breaker+FVG V2</h1>
+          <h1>Breaker+FVG</h1>
           <p class="sub" id="leftSummary">Loading...</p>
         </div>
       </div>
@@ -627,7 +639,7 @@
           <button id="rangesBtn" title="Toggle entry, stop, and 2R lines">Ranges</button>
           <button id="structureBtn" title="Toggle scored liquidity topology">Structure</button>
           <button id="skeletonBtn" title="Toggle signal markers">Skeleton</button>
-          <span class="bias-pill" id="skeletonBias">Model: n/a</span>
+          <span class="bias-pill" id="skeletonBias">Skeleton: n/a</span>
           <button id="fitBtn">Fit</button>
           <button id="lastSignalBtn">Last signal</button>
           <a class="pill" href="../">Ranker</a>
@@ -647,8 +659,8 @@
       <div class="details-body">
         <div class="section">
           <h2>Selected Signal</h2>
-          <div id="tradeSystemPanel"></div>
           <div id="meterPanel"></div>
+          <div id="tradeSystemPanel"></div>
         </div>
         <div class="section">
           <h2>Signals</h2>
@@ -663,7 +675,13 @@
   </div>
 
   <script>
-    const DATA_URL = "../chart/data/chart_payload.json";
+    const REPO_BASE = (() => {
+      const parts = window.location.pathname.split("/").filter(Boolean);
+      const repoIndex = parts.indexOf("breaker-fvg-signal-v2");
+      if (repoIndex >= 0) return `/${parts.slice(0, repoIndex + 1).join("/")}`;
+      return "";
+    })();
+    const DATA_URL = `${REPO_BASE}/chart/data/chart_payload.json`;
     const state = {
       payload: null,
       tickers: [],
@@ -675,7 +693,7 @@
       markersVisible: true,
       rollingVisible: false,
       rangeVisible: true,
-      structureVisible: true
+      structureVisible: false
     };
 
     const el = {
@@ -710,16 +728,43 @@
       return `${(n * 100).toLocaleString(undefined, { maximumFractionDigits: digits })}%`;
     }
 
+    function firstFinite(...values) {
+      for (const value of values) {
+        const n = Number(value);
+        if (Number.isFinite(n)) return n;
+      }
+      return null;
+    }
+
     function fmtTime(value) {
       const n = Number(value);
       if (!Number.isFinite(n) || n <= 0) return "n/a";
       return new Date(n * 1000).toLocaleString(undefined, {
+        timeZone: "Asia/Kolkata",
         year: "numeric",
         month: "short",
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit"
       });
+    }
+
+    function fmtGenerated(value) {
+      if (!value) return "Generated: n/a";
+      const iso = String(value).includes("T") ? value : String(value).replace(
+        /^(\d{4})(\d{2})(\d{2})T?(\d{2})(\d{2})(\d{2})Z?$/,
+        "$1-$2-$3T$4:$5:$6Z"
+      );
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return `Generated: ${value}`;
+      return `Generated ${d.toLocaleString(undefined, {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      })}`;
     }
 
     function pillClass(value) {
@@ -731,15 +776,10 @@
 
     function signalProbability(signal) {
       if (!signal) return { probability: 0, stage: "No signal" };
-      const score = Number(signal.model_score);
+      const score = firstFinite(signal.raw_model_score, signal.ungated_model_score, signal.model_probability, signal.model_score);
       const probability = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
-      const bucket = String(signal.bucket || "").toLowerCase();
       let stage = "Not classified";
-      if (bucket.includes("ultra")) stage = "Ultra";
-      else if (bucket.includes("high")) stage = "High";
-      else if (bucket.includes("neutral")) stage = "Neutral";
-      else if (bucket.includes("reject")) stage = "Reject";
-      else if (probability >= 0.7) stage = "Ultra";
+      if (probability >= 0.7) stage = "Ultra";
       else if (probability >= 0.5) stage = "High";
       else if (probability >= 0.28) stage = "Neutral";
       else stage = "Reject";
@@ -778,9 +818,20 @@
     }
 
     function loadTickerList() {
-      state.tickers = Object.values(state.payload.tickers || {}).sort((a, b) => a.ticker.localeCompare(b.ticker));
-      const summary = state.payload.summary || {};
-      el.leftSummary.textContent = `${summary.ticker_count || 0} tickers, ${summary.signal_count || 0} signals`;
+      const latestSignalTime = item => Math.max(0, ...(item.signals || []).map(signal => Number(signal.decision_time) || 0));
+      const latestSignalScore = item => {
+        const latest = [...(item.signals || [])].sort((a, b) => (Number(b.decision_time) || 0) - (Number(a.decision_time) || 0))[0];
+        return firstFinite(latest?.raw_model_score, latest?.ungated_model_score, latest?.model_probability, latest?.model_score) || 0;
+      };
+      state.tickers = Object.values(state.payload.tickers || {}).sort((a, b) => {
+        const timeDiff = latestSignalTime(b) - latestSignalTime(a);
+        if (timeDiff) return timeDiff;
+        const scoreDiff = latestSignalScore(b) - latestSignalScore(a);
+        if (scoreDiff) return scoreDiff;
+        return a.ticker.localeCompare(b.ticker);
+      });
+      const source = state.payload.source || {};
+      el.leftSummary.textContent = fmtGenerated(state.payload.generated_at || source.bridge_generated_at);
       renderWatchlist();
     }
 
@@ -820,13 +871,11 @@
       state.candleSeries.setData(candleData);
       renderMarkers();
       el.chartTitle.textContent = state.ticker.ticker;
-      el.chartSubtitle.textContent = `${state.ticker.signals.length} V2 model signals`;
-      const buckets = state.ticker.signals.reduce((acc, signal) => {
-        const key = signal.bucket || "n/a";
-        acc[key] = (acc[key] || 0) + 1;
-        return acc;
-      }, {});
-      el.skeletonBias.textContent = Object.entries(buckets).map(([key, value]) => `${key}: ${value}`).join(" | ") || "Model: n/a";
+      el.chartSubtitle.textContent = `${state.ticker.signals.length} Breaker+FVG signals`;
+      const skeleton = state.ticker.market_skeleton || {};
+      el.skeletonBias.textContent = skeleton.state
+        ? `Skeleton: ${skeleton.state} (${skeleton.last_high_type || "n/a"}/${skeleton.last_low_type || "n/a"})`
+        : "Skeleton: n/a";
       renderSignals();
       renderSignalDetail();
       focusSignal(state.signal);
@@ -839,13 +888,20 @@
         state.candleSeries.setMarkers([]);
         return;
       }
-      const markers = state.ticker.signals.map((signal, index) => ({
-        time: signal.decision_time,
-        position: signal.direction === "short" ? "aboveBar" : "belowBar",
-        color: signal.permission === "yes" ? "#26a69a" : (signal.bucket === "reject" ? "#ef5350" : "#f9a825"),
-        shape: signal.direction === "short" ? "arrowDown" : "arrowUp",
-        text: `${index + 1} ${signal.bucket || ""}`.trim(),
-      }));
+      const markers = state.ticker.signals
+        .map((signal, index) => {
+          const time = nearestCandleTime(signal.signal_time || signal.decision_time);
+          if (!time) return null;
+          return {
+            time,
+            position: "aboveBar",
+            color: "#5c9ded",
+            shape: "arrowDown",
+            text: `B+FVG ${index + 1}`,
+          };
+        })
+        .filter(Boolean);
+      window.__lastSignalMarkers = markers;
       state.candleSeries.setMarkers(markers);
     }
 
@@ -881,9 +937,132 @@
       state.lineSeries.push(series);
     }
 
+    function candleTimeAfter(time, bars = 2) {
+      const candles = state.ticker?.candles || [];
+      if (!candles.length) return null;
+      const t = Number(time);
+      const idx = candles.findIndex(candle => Number(candle.t) >= t);
+      if (idx < 0) return candles[candles.length - 1].t;
+      return candles[Math.min(candles.length - 1, idx + bars)].t;
+    }
+
+    function nearestCandleTime(time) {
+      const candles = state.ticker?.candles || [];
+      const t = Number(time);
+      if (!candles.length || !Number.isFinite(t)) return null;
+      let best = candles[0].t;
+      let bestDistance = Math.abs(Number(best) - t);
+      for (const candle of candles) {
+        const distance = Math.abs(Number(candle.t) - t);
+        if (distance < bestDistance) {
+          best = candle.t;
+          bestDistance = distance;
+        }
+      }
+      return best;
+    }
+
+    function addLevelSegment(level, color, title, style = LightweightCharts.LineStyle.Dotted) {
+      const numeric = Number(level && level.price);
+      if (!Number.isFinite(numeric)) return;
+      const candles = state.ticker?.candles || [];
+      if (!candles.length) return;
+      let startTime = firstFinite(level.time, level.formation_time, level.oldest_time, level.newest_time);
+      if (startTime === null) {
+        addPriceLine(numeric, color, title, style);
+        return;
+      }
+      startTime = nearestCandleTime(startTime) || startTime;
+      let endTime = firstFinite(level.end_time, state.signal?.decision_time, level.newest_time, candles[candles.length - 1].t);
+      endTime = nearestCandleTime(endTime) || endTime;
+      if (startTime < candles[0].t) startTime = candles[0].t;
+      if (!Number.isFinite(endTime) || endTime <= startTime) endTime = candleTimeAfter(startTime, 2);
+      if (!Number.isFinite(endTime) || endTime <= startTime) return;
+
+      const series = state.chart.addLineSeries({
+        color,
+        lineWidth: 1,
+        lineStyle: style,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      series.setData([
+        { time: startTime, value: numeric },
+        { time: endTime, value: numeric },
+      ]);
+      series.setMarkers([{
+        time: endTime,
+        position: "inBar",
+        color,
+        shape: "circle",
+        text: title,
+        size: 1,
+      }]);
+      state.lineSeries.push(series);
+    }
+
+    function signalSegmentEnd(signal, bars = 14) {
+      const anchor = firstFinite(signal?.decision_time, signal?.signal_time);
+      if (anchor === null) return null;
+      return candleTimeAfter(anchor, bars);
+    }
+
+    function renderSetupLevels() {
+      const signals = state.ticker?.signals || [];
+      signals.forEach((signal) => {
+        const endTime = signalSegmentEnd(signal, 14);
+        (signal.setup_levels || []).forEach((level) => {
+          addLevelSegment(
+            { ...level, end_time: endTime },
+            level.color || "#9ca3af",
+            level.label || level.name || "LVL",
+            LightweightCharts.LineStyle.Solid
+          );
+        });
+        (signal.fvg_zones || []).forEach((zone) => {
+          const lower = Number(zone.lower);
+          const upper = Number(zone.upper);
+          if (!Number.isFinite(lower) || !Number.isFinite(upper)) return;
+          const startTime = firstFinite(zone.time, signal.signal_time, signal.decision_time);
+          const fvgEnd = endTime || candleTimeAfter(startTime, 14);
+          const color = zone.side === "bear" ? "#ef5350" : "#26a69a";
+          addLevelSegment(
+            { price: Math.max(lower, upper), time: startTime, end_time: fvgEnd },
+            color,
+            "FVG",
+            LightweightCharts.LineStyle.Dotted
+          );
+          addLevelSegment(
+            { price: Math.min(lower, upper), time: startTime, end_time: fvgEnd },
+            color,
+            "FVG",
+            LightweightCharts.LineStyle.Dotted
+          );
+        });
+      });
+    }
+
     function renderLines() {
       clearLines();
+      renderSetupLevels();
       if (!state.signal) return;
+      const seen = new Set();
+      const addSemanticLevel = (level, color, label, style = LightweightCharts.LineStyle.Dotted) => {
+        const price = Number(level && level.price);
+        if (!Number.isFinite(price)) return;
+        const key = `${label}:${Math.round(price * 10000)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        addLevelSegment(level, color, label, style);
+      };
+      const levelLabel = (level, role) => {
+        const side = String(level.side || "").toUpperCase();
+        if (role === "target_side" && side === "BSL") return "BSL";
+        if (role === "stop_or_swept_side" && side === "SSL") return "ISL";
+        if (side === "BSL" || side === "SSL") return side;
+        return "LQ";
+      };
       if (state.rangeVisible) {
         addPriceLine(state.signal.entry, "#2962ff", "Entry");
         addPriceLine(state.signal.stop, "#ef5350", "Stop", LightweightCharts.LineStyle.Dashed);
@@ -893,19 +1072,18 @@
         addPriceLine(Number(state.signal.entry) + direction * 2 * Number(state.signal.risk), "#f9a825", "2R", LightweightCharts.LineStyle.Dashed);
       }
       if (state.rollingVisible) {
-        (state.signal.target_liquidity || []).forEach((level, idx) => {
-          addPriceLine(level.price, "#26a69a", `Target ${idx + 1} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
+        (state.signal.target_liquidity || []).forEach((level) => {
+          addSemanticLevel(level, "#26a69a", levelLabel(level, "target_side"));
         });
-        (state.signal.adverse_liquidity || []).forEach((level, idx) => {
-          addPriceLine(level.price, "#ef5350", `Adverse ${idx + 1} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
+        (state.signal.adverse_liquidity || []).forEach((level) => {
+          addSemanticLevel(level, "#f9a825", levelLabel(level, "stop_or_swept_side"));
         });
       }
       if (state.structureVisible) {
-        (state.signal.liquidity_levels || []).forEach((level, idx) => {
+        (state.signal.liquidity_levels || []).forEach((level) => {
           const role = String(level.role || "");
           const color = role === "target_side" ? "#26a69a" : role === "stop_or_swept_side" ? "#ef5350" : "#9ca3af";
-          const side = level.side || "LQ";
-          addPriceLine(level.price, color, `${side} D${level.decile || "-"} ${fmt(level.score, 1)}`, LightweightCharts.LineStyle.Dotted);
+          addSemanticLevel(level, color, levelLabel(level, role));
         });
       }
     }
@@ -950,9 +1128,15 @@
       const probability = signalProbability(s);
       const angle = -90 + Math.max(0, Math.min(1, probability.probability)) * 180;
       const badgeClass = s.permission === "yes" ? "take" : s.bucket === "reject" ? "reject" : "neutral";
-      const auditNote = signalCount && rejectCount === signalCount
-        ? `Current hosted payload audit: ${rejectCount}/${signalCount} decisions are reject. The approved scorer set score to 0 because this run had 0 long rows passing the artifact main gate; this is not a dashboard display bug.`
-        : `Current hosted payload: ${signalCount} decisions, reject count ${rejectCount}.`;
+      const rawScore = firstFinite(s.raw_model_score, s.ungated_model_score, s.model_probability);
+      const finalScore = firstFinite(s.model_score);
+      const rawScoreText = rawScore === null ? "n/a" : fmt(rawScore, 8);
+      const finalScoreText = finalScore === null ? "n/a" : fmt(finalScore, 8);
+      const mainGate = s.main_gate_pass ?? s.long_artifact_main_gate_pass;
+      const strictGate = s.strict_gate_pass ?? s.long_artifact_strict_gate_pass;
+      const auditNote = rawScore === null
+        ? `Current hosted payload has final decision scores only. Raw ungated model score is not exported yet; the next rerun must include raw score diagnostics. Hosted payload: ${signalCount} decisions, reject count ${rejectCount}.`
+        : `Raw score is the ungated model probability. Final rank score is the permission score after gates and thresholds.`;
       el.tradeSystemPanel.innerHTML = `
         <div class="trade-system-panel">
           <div class="trade-system-head">
@@ -965,7 +1149,10 @@
           <div class="metric-grid">
             ${metric("System", s.trade_action || "n/a")}
             ${metric("Permission", s.permission || "n/a")}
-            ${metric("Rank Score", fmt(s.model_score, 8))}
+            ${metric("Raw Score", rawScoreText)}
+            ${metric("Final Score", finalScoreText)}
+            ${metric("Main Gate", mainGate === undefined || mainGate === null ? "n/a" : String(mainGate))}
+            ${metric("Strict Gate", strictGate === undefined || strictGate === null ? "n/a" : String(strictGate))}
             ${metric("Entry", fmt(s.entry, 2))}
             ${metric("Stop", fmt(s.stop, 2))}
             ${metric("Risk %", fmtPct(s.risk_pct_of_entry, 2))}
@@ -977,7 +1164,7 @@
         <div class="probability-meter">
           <div class="meter-head">
             <div>
-              <div class="meter-title">Model Categorization</div>
+              <div class="meter-title">Success Probability</div>
               <div class="meter-stage">${probability.stage}</div>
             </div>
             <div class="meter-value">${fmtPct(probability.probability, 1)}</div>
@@ -986,7 +1173,7 @@
             <div class="meter-band"></div>
             <div class="meter-needle" style="transform: translateX(-50%) rotate(${angle}deg);"></div>
           </div>
-          <div class="meter-labels"><span>Reject</span><span>Neutral</span><span>High</span></div>
+          <div class="meter-labels"><span>Bad</span><span>Neutral</span><span>Good</span></div>
         </div>
         <div class="panel">
           <h3>Liquidity Context</h3>
@@ -1005,8 +1192,8 @@
     function metric(label, value) {
       return `
         <div class="metric">
-          <div class="label">${label}</div>
-          <div class="value">${value}</div>
+          <span>${label}</span>
+          <strong>${value}</strong>
         </div>
       `;
     }
