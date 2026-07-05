@@ -192,6 +192,67 @@ def load_liquidity_by_signal(
     return by_signal
 
 
+def compact_original_structure(item: Dict[str, Any], source_path: Path, source_decision_time: int | None) -> Dict[str, Any]:
+    ledgers = item.get("level_ledgers") if isinstance(item.get("level_ledgers"), dict) else {}
+    clusters = item.get("liquidity_clusters") if isinstance(item.get("liquidity_clusters"), dict) else {}
+    merged_fvg_zones = item.get("merged_fvg_zones") if isinstance(item.get("merged_fvg_zones"), dict) else {}
+
+    return {
+        "level_ledgers": {
+            "visual_sell_levels": ledgers.get("visual_sell_levels") or [],
+            "visual_buy_levels": ledgers.get("visual_buy_levels") or [],
+        },
+        "liquidity_clusters": {
+            "sell": clusters.get("sell") or [],
+            "buy": clusters.get("buy") or [],
+        },
+        "merged_fvg_zones": {
+            "bullish": merged_fvg_zones.get("bullish") or [],
+            "bearish": merged_fvg_zones.get("bearish") or [],
+        },
+        "market_skeleton": item.get("market_skeleton") or {},
+        "structure_state": item.get("structure_state") or {},
+        "structure_source": {
+            "path": str(source_path),
+            "decision_time": source_decision_time,
+        },
+    }
+
+
+def load_original_structure_by_ticker(
+    liquidity_root: Path,
+    run_prefix: str,
+    tickers: Iterable[str],
+) -> Dict[str, Dict[str, Any]]:
+    by_ticker: Dict[str, Dict[str, Any]] = {}
+    for ticker in sorted(set(tickers)):
+        payload_dir = liquidity_root / f"{run_prefix}_{ticker_slug(ticker)}" / "payloads"
+        if not payload_dir.exists():
+            continue
+
+        best_item: Dict[str, Any] | None = None
+        best_path: Path | None = None
+        best_decision_time: int | None = None
+        for payload_path in payload_dir.glob("*.json"):
+            try:
+                payload = read_json(payload_path)
+            except (OSError, json.JSONDecodeError):
+                continue
+            ticker_items = payload.get("tickers") or []
+            if not ticker_items:
+                continue
+            item = ticker_items[0]
+            decision_time = as_int(payload.get("decision_time")) or 0
+            if best_item is None or decision_time > (best_decision_time or 0):
+                best_item = item
+                best_path = payload_path
+                best_decision_time = decision_time
+
+        if best_item is not None and best_path is not None:
+            by_ticker[ticker] = compact_original_structure(best_item, best_path, best_decision_time)
+    return by_ticker
+
+
 def load_candles(candles_dir: Path, ticker: str, max_candles: int) -> List[Dict[str, float | int]]:
     path = candles_dir / f"{ticker}_1h.csv"
     if not path.exists():
@@ -246,10 +307,16 @@ def main() -> int:
         tickers,
         args.max_liquidity_per_signal,
     )
+    original_structure_by_ticker = load_original_structure_by_ticker(
+        args.liquidity_root,
+        args.liquidity_run_prefix,
+        tickers,
+    )
 
     ticker_payloads: Dict[str, Any] = {}
     total_candles = 0
     total_liquidity = 0
+    total_structure_clusters = 0
     for ticker in tickers:
         signals = [row for row in compact_signals if row.get("ticker") == ticker]
         for signal in signals:
@@ -258,11 +325,16 @@ def main() -> int:
             total_liquidity += len(signal["liquidity_levels"])
         candles = load_candles(args.candles_dir, ticker, args.max_candles_per_ticker)
         total_candles += len(candles)
-        ticker_payloads[ticker] = {
+        structure = original_structure_by_ticker.get(ticker) or {}
+        clusters = structure.get("liquidity_clusters") if isinstance(structure.get("liquidity_clusters"), dict) else {}
+        total_structure_clusters += len(clusters.get("buy") or []) + len(clusters.get("sell") or [])
+        ticker_payload = {
             "ticker": ticker,
             "candles": candles,
             "signals": sorted(signals, key=lambda row: row.get("decision_time") or 0),
         }
+        ticker_payload.update(structure)
+        ticker_payloads[ticker] = ticker_payload
 
     payload = {
         "schema_version": "SIGNAL_MODEL_V2_CHART_DASHBOARD_PAYLOAD_V1",
@@ -279,6 +351,8 @@ def main() -> int:
             "signal_count": len(compact_signals),
             "candle_count": total_candles,
             "liquidity_level_count": total_liquidity,
+            "structure_ticker_count": len(original_structure_by_ticker),
+            "structure_cluster_count": total_structure_clusters,
             "bucket_counts": cumulative.get("bucket_counts") or {},
             "permission_counts": cumulative.get("permission_counts") or {},
         },
