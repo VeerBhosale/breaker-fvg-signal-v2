@@ -24,6 +24,7 @@ logs/
 audits/
 reports/
 dashboard_bridge/
+web/dashboard_snapshot.html
 
 # Local temporary/runtime state
 tmp/
@@ -35,4 +36,3 @@ runtime/*.pid
 Thumbs.db
 *.swp
 *.swo
-

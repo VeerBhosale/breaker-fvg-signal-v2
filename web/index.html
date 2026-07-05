@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Breaker FVG Signal V2 Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1016;
+      --panel: #111820;
+      --panel-2: #151e28;
+      --line: #263241;
+      --line-2: #334355;
+      --text: #e6edf3;
+      --muted: #96a3b3;
+      --good: #34d399;
+      --warn: #f59e0b;
+      --bad: #fb7185;
+      --blue: #60a5fa;
+      --chip: #1c2733;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 390px;
+      min-height: 100vh;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 18px;
+      border-right: 1px solid var(--line);
+    }
+
+    .side {
+      min-width: 0;
+      padding: 18px;
+      background: #0e141b;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 750;
+    }
+
+    h2 {
+      font-size: 15px;
+      font-weight: 740;
+    }
+
+    h3 {
+      font-size: 13px;
+      font-weight: 720;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .source {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 5px 9px;
+      border: 1px solid var(--line-2);
+      border-radius: 999px;
+      background: var(--chip);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .pill.good {
+      color: var(--good);
+      border-color: rgba(52, 211, 153, 0.45);
+    }
+
+    .pill.warn {
+      color: var(--warn);
+      border-color: rgba(245, 158, 11, 0.45);
+    }
+
+    .pill.bad {
+      color: var(--bad);
+      border-color: rgba(251, 113, 133, 0.45);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric,
+    .panel,
+    .detail-block {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .metric {
+      padding: 12px;
+      min-height: 78px;
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .metric .value {
+      font-size: 22px;
+      font-weight: 780;
+      line-height: 1.1;
+      overflow-wrap: anywhere;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(170px, 1.1fr) repeat(3, minmax(120px, 0.65fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .control {
+      min-width: 0;
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 10px;
+      outline: none;
+    }
+
+    .control:focus {
+      border-color: var(--blue);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 210px);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1180px;
+    }
+
+    th,
+    td {
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 720;
+      text-transform: uppercase;
+    }
+
+    tr {
+      cursor: pointer;
+    }
+
+    tr:hover,
+    tr.selected {
+      background: #182331;
+    }
+
+    .num {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .score {
+      color: var(--blue);
+      font-weight: 720;
+    }
+
+    .layout-side {
+      display: grid;
+      gap: 12px;
+    }
+
+    .side-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .selected-title {
+      min-width: 0;
+    }
+
+    .selected-title h2 {
+      font-size: 18px;
+      margin-bottom: 4px;
+      overflow-wrap: anywhere;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+    }
+
+    .detail-block {
+      padding: 12px;
+      min-height: 74px;
+    }
+
+    .detail-block .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .detail-block .value {
+      font-size: 18px;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+    }
+
+    .section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .level {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 9px;
+      align-items: center;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      min-height: 48px;
+    }
+
+    .rank {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--chip);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 780;
+    }
+
+    .level-main {
+      min-width: 0;
+    }
+
+    .level-title {
+      font-size: 13px;
+      font-weight: 720;
+      overflow-wrap: anywhere;
+    }
+
+    .level-sub {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--line-2);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .error {
+      padding: 12px;
+      border: 1px solid rgba(251, 113, 133, 0.5);
+      border-radius: 8px;
+      color: var(--bad);
+      background: rgba(251, 113, 133, 0.08);
+      margin-bottom: 14px;
+      display: none;
+    }
+
+    @media (max-width: 1100px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .main {
+        border-right: 0;
+      }
+
+      .side {
+        border-top: 1px solid var(--line);
+      }
+    }
+
+    @media (max-width: 760px) {
+      .topbar,
+      .source {
+        align-items: flex-start;
+        justify-content: flex-start;
+        flex-direction: column;
+      }
+
+      .metrics,
+      .controls,
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .main,
+      .side {
+        padding: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <h1>Signal V2 Dashboard</h1>
+          <p class="muted" id="subtitle">Loading bridge state...</p>
+        </div>
+        <div class="source">
+          <span class="pill" id="runId">run: n/a</span>
+          <span class="pill" id="generatedAt">generated: n/a</span>
+          <span class="pill" id="sourceMode">source: n/a</span>
+        </div>
+      </div>
+
+      <div class="error" id="errorBox"></div>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="controls">
+        <input class="control" id="searchBox" placeholder="Search ticker, signal id, reason">
+        <select class="control" id="bucketFilter">
+          <option value="">All buckets</option>
+        </select>
+        <select class="control" id="permissionFilter">
+          <option value="">All permissions</option>
+        </select>
+        <select class="control" id="directionFilter">
+          <option value="">All directions</option>
+        </select>
+      </section>
+
+      <section class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Side</th>
+              <th>Decision Time</th>
+              <th>Bucket</th>
+              <th>Permission</th>
+              <th>Rank Score</th>
+              <th>Entry</th>
+              <th>Stop</th>
+              <th>Risk %</th>
+              <th>Target Liq</th>
+              <th>Adverse Liq</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="rowsBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <aside class="side">
+      <div class="layout-side" id="detailPanel"></div>
+    </aside>
+  </div>
+
+  <script>
+    const DEFAULT_SOURCES = [
+      {
+        label: "latest",
+        live: "../dashboard_bridge/latest/live_state.json",
+        cumulative: "../dashboard_bridge/latest/cumulative_state.json"
+      },
+      {
+        label: "fresh-original-burnin",
+        live: "../dashboard_bridge/v2_dashboard_bridge_original_fresh_178_tail300_parallel_burnin/live_state.json",
+        cumulative: "../dashboard_bridge/v2_dashboard_bridge_original_fresh_178_tail300_parallel_burnin/cumulative_state.json"
+      }
+    ];
+
+    const state = {
+      rows: [],
+      filtered: [],
+      cumulative: null,
+      live: null,
+      selectedId: null,
+      sourceLabel: "n/a"
+    };
+
+    const els = {
+      subtitle: document.getElementById("subtitle"),
+      runId: document.getElementById("runId"),
+      generatedAt: document.getElementById("generatedAt"),
+      sourceMode: document.getElementById("sourceMode"),
+      errorBox: document.getElementById("errorBox"),
+      metrics: document.getElementById("metrics"),
+      searchBox: document.getElementById("searchBox"),
+      bucketFilter: document.getElementById("bucketFilter"),
+      permissionFilter: document.getElementById("permissionFilter"),
+      directionFilter: document.getElementById("directionFilter"),
+      rowsBody: document.getElementById("rowsBody"),
+      detailPanel: document.getElementById("detailPanel")
+    };
+
+    function fmtNum(value, digits = 2) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "n/a";
+      return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+    }
+
+    function fmtPct(value, digits = 1) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "n/a";
+      return `${(n * 100).toLocaleString(undefined, { maximumFractionDigits: digits })}%`;
+    }
+
+    function fmtTime(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return "n/a";
+      return new Date(n * 1000).toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function shortReason(value) {
+      if (!value) return "n/a";
+      const text = String(value);
+      return text.length > 62 ? `${text.slice(0, 59)}...` : text;
+    }
+
+    function cssClassForValue(value) {
+      const text = String(value || "").toLowerCase();
+      if (["yes", "allow", "allowed", "ultra_high_conviction", "high_conviction"].includes(text)) return "good";
+      if (["review", "neutral_no_edge", "not_classified"].includes(text)) return "warn";
+      if (["no", "reject", "skip_reject", "skip_no_trade", "insufficient_data"].includes(text)) return "bad";
+      return "";
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    async function loadBridgeData() {
+      if (window.SIGNAL_V2_EMBEDDED) {
+        state.live = window.SIGNAL_V2_EMBEDDED.live;
+        state.cumulative = window.SIGNAL_V2_EMBEDDED.cumulative;
+        state.rows = Array.isArray(state.cumulative.rows) ? state.cumulative.rows : [];
+        state.sourceLabel = window.SIGNAL_V2_EMBEDDED.label || "embedded";
+        return;
+      }
+      const errors = [];
+      for (const source of DEFAULT_SOURCES) {
+        try {
+          const [live, cumulative] = await Promise.all([
+            fetchJson(source.live),
+            fetchJson(source.cumulative)
+          ]);
+          state.live = live;
+          state.cumulative = cumulative;
+          state.rows = Array.isArray(cumulative.rows) ? cumulative.rows : [];
+          state.sourceLabel = source.label;
+          return;
+        } catch (error) {
+          errors.push(`${source.label}: ${error.message}`);
+        }
+      }
+      throw new Error(`No bridge data could be loaded. ${errors.join(" | ")}`);
+    }
+
+    function countsFromRows(key) {
+      return state.rows.reduce((acc, row) => {
+        const value = row[key] || "missing";
+        acc[value] = (acc[value] || 0) + 1;
+        return acc;
+      }, {});
+    }
+
+    function optionSet(key) {
+      return Array.from(new Set(state.rows.map(row => row[key]).filter(Boolean))).sort();
+    }
+
+    function fillSelect(select, values, label) {
+      select.innerHTML = `<option value="">${label}</option>`;
+      for (const value of values) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+      }
+    }
+
+    function renderHeader() {
+      const liveCount = Number(state.live && state.live.row_count) || 0;
+      const cumulativeCount = Number(state.cumulative && state.cumulative.row_count) || state.rows.length;
+      els.subtitle.textContent = `${liveCount} live rows, ${cumulativeCount} cumulative rows`;
+      els.runId.textContent = `run: ${(state.cumulative && state.cumulative.run_id) || "n/a"}`;
+      els.generatedAt.textContent = `generated: ${((state.cumulative && state.cumulative.generated_at) || "n/a")}`;
+      els.sourceMode.textContent = `source: ${state.sourceLabel}`;
+    }
+
+    function renderMetrics() {
+      const permissions = state.cumulative && state.cumulative.permission_counts
+        ? state.cumulative.permission_counts
+        : countsFromRows("permission");
+      const buckets = state.cumulative && state.cumulative.bucket_counts
+        ? state.cumulative.bucket_counts
+        : countsFromRows("bucket");
+      const yesCount = Number(permissions.yes || permissions.allow || permissions.allowed || 0);
+      const rejectCount = Number(permissions.no || permissions.reject || 0);
+      const scoredRows = state.rows.filter(row => row.score_ready || row.model_score !== null && row.model_score !== undefined).length;
+      const withTarget = state.rows.filter(row => (row.target_liquidity || []).length > 0).length;
+      const cards = [
+        ["Cumulative Rows", state.rows.length],
+        ["Live Rows", (state.live && state.live.row_count) || 0],
+        ["Entry Allowed", yesCount],
+        ["Rejected / No", rejectCount],
+        ["With Target Liquidity", withTarget],
+        ["Scored Rows", scoredRows],
+        ["Buckets", Object.keys(buckets).length],
+        ["Permissions", Object.keys(permissions).length],
+        ["Avg Target Score", avgMetric("target_liquidity_score_sum")],
+        ["Avg Adverse Score", avgMetric("adverse_liquidity_score_sum")]
+      ];
+      els.metrics.innerHTML = cards.map(([label, value]) => `
+        <div class="metric">
+          <div class="label">${label}</div>
+          <div class="value">${typeof value === "number" ? fmtNum(value, 2) : value}</div>
+        </div>
+      `).join("");
+    }
+
+    function avgMetric(key) {
+      const values = state.rows
+        .map(row => row.summary_metrics && Number(row.summary_metrics[key]))
+        .filter(Number.isFinite);
+      if (!values.length) return "n/a";
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    function applyFilters() {
+      const search = els.searchBox.value.trim().toLowerCase();
+      const bucket = els.bucketFilter.value;
+      const permission = els.permissionFilter.value;
+      const direction = els.directionFilter.value;
+      state.filtered = state.rows.filter(row => {
+        if (bucket && row.bucket !== bucket) return false;
+        if (permission && row.permission !== permission) return false;
+        if (direction && row.direction !== direction) return false;
+        if (!search) return true;
+        const haystack = [
+          row.ticker,
+          row.signal_id,
+          row.bucket,
+          row.permission,
+          row.reason
+        ].join(" ").toLowerCase();
+        return haystack.includes(search);
+      });
+      renderRows();
+      const selected = selectedRow();
+      if (!selected && state.filtered[0]) {
+        state.selectedId = state.filtered[0].signal_id;
+      }
+      renderDetail();
+    }
+
+    function renderRows() {
+      const fragment = document.createDocumentFragment();
+      for (const row of state.filtered) {
+        const tr = document.createElement("tr");
+        if (row.signal_id === state.selectedId) tr.classList.add("selected");
+        const targetCount = row.summary_metrics && row.summary_metrics.target_liquidity_count;
+        const adverseCount = row.summary_metrics && row.summary_metrics.adverse_liquidity_count;
+        tr.innerHTML = `
+          <td>${row.ticker || "n/a"}</td>
+          <td>${row.direction || "n/a"}</td>
+          <td class="num">${fmtTime(row.decision_time)}</td>
+          <td><span class="pill ${cssClassForValue(row.bucket)}">${row.bucket || "n/a"}</span></td>
+          <td><span class="pill ${cssClassForValue(row.permission)}">${row.permission || "n/a"}</span></td>
+          <td class="num score">${fmtNum(row.model_score, 6)}</td>
+          <td class="num">${fmtNum(row.entry, 2)}</td>
+          <td class="num">${fmtNum(row.stop, 2)}</td>
+          <td class="num">${fmtPct(row.risk_pct_of_entry)}</td>
+          <td class="num">${fmtNum(targetCount, 0)}</td>
+          <td class="num">${fmtNum(adverseCount, 0)}</td>
+          <td title="${row.reason || ""}">${shortReason(row.reason)}</td>
+        `;
+        tr.addEventListener("click", () => {
+          state.selectedId = row.signal_id;
+          renderRows();
+          renderDetail();
+        });
+        fragment.appendChild(tr);
+      }
+      els.rowsBody.innerHTML = "";
+      els.rowsBody.appendChild(fragment);
+    }
+
+    function selectedRow() {
+      return state.rows.find(row => row.signal_id === state.selectedId) || null;
+    }
+
+    function renderDetail() {
+      const row = selectedRow() || state.filtered[0] || state.rows[0];
+      if (!row) {
+        els.detailPanel.innerHTML = `<div class="empty">No dashboard rows loaded.</div>`;
+        return;
+      }
+      state.selectedId = row.signal_id;
+      const summary = row.summary_metrics || {};
+      els.detailPanel.innerHTML = `
+        <div class="side-head">
+          <div class="selected-title">
+            <h2>${row.ticker || "n/a"} ${String(row.direction || "").toUpperCase()}</h2>
+            <p class="muted">${fmtTime(row.decision_time)}</p>
+          </div>
+          <span class="pill ${cssClassForValue(row.bucket)}">${row.bucket || "n/a"}</span>
+        </div>
+
+        <div class="detail-grid">
+          ${detailBlock("Permission", row.permission || "n/a")}
+          ${detailBlock("Rank Score", fmtNum(row.model_score, 8))}
+          ${detailBlock("Entry", fmtNum(row.entry, 2))}
+          ${detailBlock("Stop", fmtNum(row.stop, 2))}
+          ${detailBlock("Risk %", fmtPct(row.risk_pct_of_entry, 2))}
+          ${detailBlock("Risk Points", fmtNum(row.risk, 2))}
+          ${detailBlock("Target Score Sum", fmtNum(summary.target_liquidity_score_sum, 2))}
+          ${detailBlock("Adverse Score Sum", fmtNum(summary.adverse_liquidity_score_sum, 2))}
+        </div>
+
+        <div class="detail-block">
+          <div class="label">Reason</div>
+          <div class="value" style="font-size:14px">${row.reason || "n/a"}</div>
+        </div>
+
+        ${renderLevelSection("Target Liquidity", row.target_liquidity || [], "target")}
+        ${renderLevelSection("Adverse Liquidity", row.adverse_liquidity || [], "adverse")}
+        ${renderLevelSection("Scored Liquidity Context", row.scored_liquidity_context || [], "scored")}
+      `;
+    }
+
+    function detailBlock(label, value) {
+      return `
+        <div class="detail-block">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+        </div>
+      `;
+    }
+
+    function renderLevelSection(title, rows, mode) {
+      if (!rows.length) {
+        return `
+          <div class="section">
+            <h3>${title}</h3>
+            <div class="empty">No rows</div>
+          </div>
+        `;
+      }
+      return `
+        <div class="section">
+          <h3>${title}</h3>
+          <div class="list">
+            ${rows.slice(0, 10).map((level, idx) => renderLevel(level, idx, mode)).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderLevel(level, idx, mode) {
+      const rank = level.rank || idx + 1;
+      const role = level.candidate_role ? `${level.candidate_role} | ` : "";
+      const side = level.side || "n/a";
+      const price = fmtNum(level.price, 2);
+      const score = fmtNum(level.score, 2);
+      const distance = fmtNum(level.distance_atr, 2);
+      const extra = mode === "scored" && level.percentile !== undefined
+        ? ` | pct ${fmtPct(level.percentile, 0)} | decile ${level.decile || "n/a"}`
+        : "";
+      return `
+        <div class="level">
+          <div class="rank">${rank}</div>
+          <div class="level-main">
+            <div class="level-title">${role}${side} @ ${price}</div>
+            <div class="level-sub">${distance} ATR away | score ${score}${extra}</div>
+          </div>
+          <span class="pill">${side}</span>
+        </div>
+      `;
+    }
+
+    function boot() {
+      loadBridgeData()
+        .then(() => {
+          els.errorBox.style.display = "none";
+          renderHeader();
+          renderMetrics();
+          fillSelect(els.bucketFilter, optionSet("bucket"), "All buckets");
+          fillSelect(els.permissionFilter, optionSet("permission"), "All permissions");
+          fillSelect(els.directionFilter, optionSet("direction"), "All directions");
+          state.selectedId = state.rows[0] && state.rows[0].signal_id;
+          applyFilters();
+        })
+        .catch(error => {
+          els.subtitle.textContent = "No bridge data loaded";
+          els.errorBox.style.display = "block";
+          els.errorBox.textContent = error.message;
+          els.metrics.innerHTML = "";
+          els.detailPanel.innerHTML = `<div class="empty">Run the V2 bridge exporter or copy bridge artifacts into dashboard_bridge/latest.</div>`;
+        });
+    }
+
+    [els.searchBox, els.bucketFilter, els.permissionFilter, els.directionFilter].forEach(el => {
+      el.addEventListener("input", applyFilters);
+      el.addEventListener("change", applyFilters);
+    });
+
+    boot();
+  </script>
+</body>
+</html>
