@@ -1,0 +1,69 @@
+{
+  "version": "SIGNAL_MODEL_V2_RUNTIME_CONFIG_EXAMPLE",
+  "created_at": "2026-07-05",
+  "timezone": "Asia/Calcutta",
+  "interval": "1h",
+  "universes": {
+    "original": "Newtest/Breaker_Based/NSE_Symbols.csv",
+    "expanded_research": [
+      "Newtest/Breaker_Based/NSE_Symbols.csv",
+      "Newtest/Breaker_Based/NSE_Symbols_research_extra_100.csv",
+      "Newtest/Breaker_Based/NSE_Symbols_research_extra_100_round2.csv",
+      "Newtest/Breaker_Based/NSE_Symbols_research_extra_replacements_4.csv"
+    ]
+  },
+  "modes": {
+    "live": {
+      "enabled": false,
+      "order_placement_enabled": false,
+      "manual_review_required": true
+    },
+    "paper": {
+      "enabled": true,
+      "notional_capital_inr": 1000000
+    },
+    "bridge_smoke": {
+      "enabled": true
+    }
+  },
+  "data_ingestion": {
+    "default_provider": "local_csv",
+    "fresh_provider": "yfinance",
+    "interval": "1h",
+    "min_rows": 50,
+    "input_timezone": "Asia/Calcutta",
+    "max_retries": 3,
+    "retry_sleep_seconds": 5,
+    "allow_partial": false,
+    "local_csv": {
+      "source_dir": "Newtest/Breaker_Based/signal_model_v2/data/raw/manual_inbox",
+      "source_manifest": null
+    },
+    "yfinance": {
+      "period": "730d",
+      "start": null,
+      "end": null,
+      "network_required": true
+    }
+  },
+  "rolling_history": {
+    "incremental_store_dir": "Newtest/Breaker_Based/signal_model_v2/data/raw/v2_incremental_candle_store",
+    "incremental_overlap_bars": 5,
+    "max_store_candles": 6000,
+    "runtime_lookback_candles": 1500,
+    "runtime_lookback_note": "Keep a larger local candle store with incremental append/merge updates, then use the latest runtime_lookback_candles for signal detection and decision-time liquidity extraction."
+  },
+  "v1_bridge": {
+    "allowed": true,
+    "purpose": "Reuse approved V1 artifacts/scripts inside the V2 boundary while raw V2 feature producers are implemented.",
+    "model_registry": "Newtest/Breaker_Based/signal_model/configs/trade_system_model_registry_v1.json",
+    "signal_artifacts": "Newtest/Breaker_Based/signal_model/configs/trade_system_signal_model_artifacts_v1.json",
+    "feature_source_manifest": "Newtest/Breaker_Based/signal_model/configs/trade_system_feature_source_manifest_v1.json"
+  },
+  "hard_rules": {
+    "no_original_engine_edits": true,
+    "decision_time_only_features": true,
+    "labels_never_as_features": true,
+    "incomplete_rows_bucket": "insufficient_data"
+  }
+}

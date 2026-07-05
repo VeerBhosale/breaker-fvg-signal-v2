@@ -1,0 +1,23 @@
+{
+  "cache_status": "trained_and_saved_artifact",
+  "generated_at": "2026-07-05T12:11:50.995309+00:00",
+  "model_artifact": "D:\\Coding\\Python Codes\\Newtest\\Breaker_Based\\signal_model_v2\\models\\liquidity_v1_2_d31_pruned_decision_time_xgbregressor.pkl",
+  "note": "The original V1 scorer recreated the promoted model in memory for each scoring call. V2 persists the same recreated model as an inference artifact to avoid per-ticker retraining.",
+  "signature": {
+    "approved_model_version": "liquidity_v1_2_d31_pruned_decision_time",
+    "feature_count": 391,
+    "feature_sha256": "98a66d463b2c0459748c2e87a6582792e4450c9f94b74059bac8f224f5a82ef0",
+    "train_d29": {
+      "mtime_ns": 1782064821014369600,
+      "path": "D:\\Coding\\Python Codes\\Newtest\\Breaker_Based\\signal_model\\datasets\\features\\liquidity_v1_2_all_research_d29_features.csv",
+      "size": 39005337
+    },
+    "train_d31": {
+      "mtime_ns": 1782066619268303500,
+      "path": "D:\\Coding\\Python Codes\\Newtest\\Breaker_Based\\signal_model\\datasets\\features\\liquidity_v1_2_all_research_d31_features.csv",
+      "size": 107326392
+    }
+  },
+  "source": "signal_model.scripts.score_liquidity_decision_time_rows_v1.train_reference_model",
+  "version": "SIGNAL_MODEL_V2_LIQUIDITY_MODEL_ARTIFACT_AUDIT"
+}

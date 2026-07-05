@@ -1,0 +1,36 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SignalModelV2S3Artifacts",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<signal-model-v2-bucket>",
+        "arn:aws:s3:::<signal-model-v2-bucket>/signal_model_v2/*"
+      ]
+    },
+    {
+      "Sid": "SignalModelV2RuntimeParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": "arn:aws:ssm:<region>:<account-id>:parameter/signal-model-v2/*"
+    },
+    {
+      "Sid": "SignalModelV2CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:<region>:<account-id>:log-group:/signal-model-v2/runtime:*"
+    }
+  ]
+}

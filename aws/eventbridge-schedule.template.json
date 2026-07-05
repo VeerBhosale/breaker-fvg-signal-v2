@@ -1,0 +1,23 @@
+{
+  "Name": "signal-model-v2-1h-paper-schedule",
+  "Description": "Runs Signal Model V2 after each NSE 1H candle close. Paper/manual-review only.",
+  "ScheduleExpression": "cron(20 4-10 ? * MON-FRI *)",
+  "State": "DISABLED",
+  "Target": {
+    "Arn": "arn:aws:ecs:<region>:<account-id>:cluster/signal-model-v2",
+    "RoleArn": "arn:aws:iam::<account-id>:role/signal-model-v2-eventbridge-role",
+    "EcsParameters": {
+      "TaskDefinitionArn": "arn:aws:ecs:<region>:<account-id>:task-definition/signal-model-v2-paper-runtime",
+      "LaunchType": "FARGATE",
+      "PlatformVersion": "LATEST",
+      "NetworkConfiguration": {
+        "awsvpcConfiguration": {
+          "Subnets": ["subnet-xxxxxxxx"],
+          "SecurityGroups": ["sg-xxxxxxxx"],
+          "AssignPublicIp": "ENABLED"
+        }
+      }
+    },
+    "Input": "{\"runtime_mode\":\"paper\",\"order_placement_enabled\":false}"
+  }
+}

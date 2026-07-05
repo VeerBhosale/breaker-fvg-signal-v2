@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Local secrets/config
+.env
+.env.*
+!.env.example
+
+# Generated V2 runtime data
+data/raw/
+data/features/
+data/signals/
+data/liquidity/
+data/predictions/
+data/paper/
+logs/
+audits/
+reports/
+dashboard_bridge/
+
+# Local temporary/runtime state
+tmp/
+temp/
+runtime/*.pid
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+

@@ -1,0 +1,53 @@
+{
+  "version": "SIGNAL_MODEL_V2_FEATURE_SOURCE_CONTRACT",
+  "created_at": "2026-07-05",
+  "feature_time_rule": "Every inference feature must be computable using candles, structure, liquidity, and context available at or before decision_time.",
+  "required_groups": [
+    "base_signal_setup",
+    "focused_quality_fq",
+    "fvg_reaction",
+    "candle_quality",
+    "topology",
+    "liquidity_aggregation",
+    "macro_context",
+    "technical_context",
+    "entry_quality",
+    "phase_path_quality"
+  ],
+  "known_v1_status": {
+    "automated_for_scoped_events": [
+      "decision_time_liquidity_topology",
+      "macro_context",
+      "technical_context",
+      "entry_quality",
+      "phase_quality"
+    ],
+    "remaining_to_port_or_verify": [
+      "base_signal_setup",
+      "fq_*",
+      "fvg_react_*",
+      "cq_*",
+      "goal/rerank composites",
+      "some metric_* fields"
+    ]
+  },
+  "label_columns_forbidden_as_features": [
+    "hit_at_least_2_bsl",
+    "hit_at_least_2_ssl",
+    "hit_at_least_1_bsl",
+    "hit_at_least_1_ssl",
+    "bsl_hit_count_trailing",
+    "ssl_hit_count_trailing",
+    "trailing_exit_r",
+    "target_close_confirmed",
+    "stop_hit",
+    "win_loss"
+  ],
+  "live_missing_behavior": {
+    "missing_required_feature": "insufficient_data",
+    "valid_structural_null_feature": "score_with_artifact_median_imputation_and_audit_warning",
+    "missing_optional_feature": "score_with_missingness_warning_if_artifact_supports_it",
+    "unknown_feature_source": "hard_fail_preflight"
+  },
+  "feature_availability_policy": "Newtest/Breaker_Based/signal_model_v2/configs/v2_feature_availability_policy.json"
+}

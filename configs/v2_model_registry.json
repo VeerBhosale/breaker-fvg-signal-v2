@@ -1,0 +1,35 @@
+{
+  "version": "SIGNAL_MODEL_V2_MODEL_REGISTRY",
+  "created_at": "2026-07-05",
+  "status": "v2_boundary_initialized",
+  "source_engine_policy": "source_reference_only_do_not_edit",
+  "approved_liquidity_model": {
+    "source": "V1 approved registry",
+    "registry_path": "Newtest/Breaker_Based/signal_model/configs/trade_system_model_registry_v1.json",
+    "version": "liquidity_v1_2_d31_pruned_all_research",
+    "feature_contract": "Newtest/Breaker_Based/signal_model/audits/liquidity_v1_2_decision_time_feature_contract.json",
+    "feature_columns": "Newtest/Breaker_Based/signal_model/datasets/features/liquidity_v1_2_decision_time_feature_columns.json",
+    "required_feature_count": 391
+  },
+  "approved_long_signal_model": {
+    "source": "V1 approved signal artifact registry",
+    "process": "ENTRY_PERMISSION_ULTRA_ONLY_V1",
+    "target": "hit_at_least_2_bsl",
+    "model_path": "Newtest/Breaker_Based/signal_model/models/trade_system_long_entry_permission_v1.json",
+    "preprocess_path": "Newtest/Breaker_Based/signal_model/models/trade_system_long_entry_permission_v1_preprocess.json",
+    "used_feature_count": 679
+  },
+  "approved_short_signal_model": {
+    "source": "V1 short approved artifact",
+    "process": "SELL_V34_ULTRA_PARITY_LOCKED_REPLAY / SELL_V32_LOCKED_V31_REPLAY",
+    "target": "hit_at_least_2_ssl",
+    "model_path": "Newtest/Breaker_Based/signal_model_short/models/short_signal_ssl_travel_oof_v1_1h_2y_all_research_short_goal_v1_current_range50_or_fvg50_hit_at_least_2_ssl_all_features.json",
+    "preprocess_path": "Newtest/Breaker_Based/signal_model_short/models/short_signal_ssl_travel_oof_v1_1h_2y_all_research_short_goal_v1_current_range50_or_fvg50_hit_at_least_2_ssl_all_features_preprocess.json"
+  },
+  "production_contract": {
+    "inference_requires_feature_complete_rows": true,
+    "missing_required_features_bucket": "insufficient_data",
+    "order_placement_enabled": false
+  }
+}
+

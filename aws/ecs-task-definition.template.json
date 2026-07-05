@@ -1,0 +1,44 @@
+{
+  "family": "signal-model-v2-paper-runtime",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "4096",
+  "executionRoleArn": "arn:aws:iam::<account-id>:role/signal-model-v2-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::<account-id>:role/signal-model-v2-runtime-role",
+  "containerDefinitions": [
+    {
+      "name": "signal-model-v2",
+      "image": "<account-id>.dkr.ecr.<region>.amazonaws.com/signal-model-v2:<image-tag>",
+      "essential": true,
+      "command": [
+        "python",
+        "Newtest/Breaker_Based/signal_model_v2/scripts/v2_aws_readiness_audit.py",
+        "--run-id",
+        "v2_aws_startup_readiness"
+      ],
+      "environment": [
+        { "name": "V2_ENV", "value": "paper" },
+        { "name": "V2_RUNTIME_MODE", "value": "aws_readiness_audit" },
+        { "name": "V2_LIVE_TRADING_ENABLED", "value": "false" },
+        { "name": "V2_ORDER_PLACEMENT_ENABLED", "value": "false" },
+        { "name": "V2_MANUAL_REVIEW_REQUIRED", "value": "true" },
+        { "name": "V2_S3_PREFIX", "value": "signal_model_v2" }
+      ],
+      "secrets": [
+        {
+          "name": "V2_S3_BUCKET",
+          "valueFrom": "arn:aws:ssm:<region>:<account-id>:parameter/signal-model-v2/s3-bucket"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/signal-model-v2/runtime",
+          "awslogs-region": "<region>",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
