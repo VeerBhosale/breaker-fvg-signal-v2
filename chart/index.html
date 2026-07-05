@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signal V2 Chart Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090f15;
+      --panel: #101821;
+      --panel-2: #141f2a;
+      --line: #263442;
+      --line-2: #34475a;
+      --text: #e7edf4;
+      --muted: #99a8b8;
+      --green: #38d996;
+      --red: #fb7185;
+      --amber: #f59e0b;
+      --blue: #60a5fa;
+      --violet: #a78bfa;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 410px;
+      min-height: 100vh;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 16px;
+      border-right: 1px solid var(--line);
+    }
+
+    .side {
+      min-width: 0;
+      padding: 16px;
+      background: #0d141c;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 780;
+    }
+
+    h2 {
+      font-size: 17px;
+      font-weight: 760;
+    }
+
+    h3 {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 740;
+      text-transform: uppercase;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .source {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 5px 9px;
+      border: 1px solid var(--line-2);
+      border-radius: 999px;
+      background: #182331;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 680;
+      white-space: nowrap;
+    }
+
+    .pill.good {
+      color: var(--green);
+      border-color: rgba(56, 217, 150, 0.45);
+    }
+
+    .pill.bad {
+      color: var(--red);
+      border-color: rgba(251, 113, 133, 0.45);
+    }
+
+    .pill.warn {
+      color: var(--amber);
+      border-color: rgba(245, 158, 11, 0.45);
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(150px, 0.55fr) minmax(300px, 1.3fr) repeat(2, minmax(120px, 0.35fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .control {
+      min-width: 0;
+      height: 42px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--text);
+      outline: none;
+    }
+
+    .control:focus {
+      border-color: var(--blue);
+    }
+
+    .chart-wrap {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #0a1016;
+      min-height: 650px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 650px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 18px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--line-2);
+    }
+
+    .side-layout {
+      display: grid;
+      gap: 12px;
+    }
+
+    .panel,
+    .detail {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .panel {
+      padding: 12px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .detail {
+      padding: 10px;
+      min-height: 68px;
+    }
+
+    .detail .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 7px;
+    }
+
+    .detail .value {
+      font-size: 17px;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+    }
+
+    .list {
+      display: grid;
+      gap: 7px;
+      max-height: 300px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .level {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #111a24;
+      padding: 9px;
+    }
+
+    .level-title {
+      font-size: 13px;
+      font-weight: 720;
+    }
+
+    .level-sub {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .error {
+      display: none;
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid rgba(251, 113, 133, 0.5);
+      border-radius: 8px;
+      color: var(--red);
+      background: rgba(251, 113, 133, 0.08);
+    }
+
+    @media (max-width: 1120px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .main {
+        border-right: 0;
+      }
+
+      .side {
+        border-top: 1px solid var(--line);
+      }
+    }
+
+    @media (max-width: 760px) {
+      .main,
+      .side {
+        padding: 12px;
+      }
+
+      .topbar,
+      .source {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .controls,
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      canvas {
+        height: 560px;
+      }
+
+      .chart-wrap {
+        min-height: 560px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <h1>Signal V2 Chart Dashboard</h1>
+          <p class="muted" id="subtitle">Loading chart payload...</p>
+        </div>
+        <div class="source">
+          <span class="pill" id="payloadStamp">payload: n/a</span>
+          <span class="pill" id="payloadSummary">rows: n/a</span>
+          <a class="pill" href="../">Ranker Dashboard</a>
+          <a class="pill" href="../v1-style/">V1 Style</a>
+        </div>
+      </div>
+
+      <div class="error" id="errorBox"></div>
+
+      <div class="controls">
+        <select class="control" id="tickerSelect"></select>
+        <select class="control" id="signalSelect"></select>
+        <select class="control" id="rangeSelect">
+          <option value="140">140 candles</option>
+          <option value="240" selected>240 candles</option>
+          <option value="420">420 candles</option>
+          <option value="all">All loaded</option>
+        </select>
+        <select class="control" id="levelMode">
+          <option value="all" selected>All levels</option>
+          <option value="target">Target only</option>
+          <option value="adverse">Adverse only</option>
+          <option value="scored">Scored only</option>
+        </select>
+      </div>
+
+      <div class="chart-wrap">
+        <canvas id="chartCanvas"></canvas>
+      </div>
+
+      <div class="legend">
+        <span class="legend-item"><span class="swatch" style="background:#38d996"></span>Up candle / target BSL</span>
+        <span class="legend-item"><span class="swatch" style="background:#fb7185"></span>Down candle / adverse SSL</span>
+        <span class="legend-item"><span class="swatch" style="background:#60a5fa"></span>Entry</span>
+        <span class="legend-item"><span class="swatch" style="background:#f59e0b"></span>Signal time</span>
+        <span class="legend-item"><span class="swatch" style="background:#a78bfa"></span>FVG zone</span>
+      </div>
+    </main>
+
+    <aside class="side">
+      <div class="side-layout" id="detailPanel"></div>
+    </aside>
+  </div>
+
+  <script>
+    const DATA_URL = "data/chart_payload.json";
+    const state = {
+      payload: null,
+      selectedTicker: "",
+      selectedSignalId: ""
+    };
+
+    const els = {
+      subtitle: document.getElementById("subtitle"),
+      payloadStamp: document.getElementById("payloadStamp"),
+      payloadSummary: document.getElementById("payloadSummary"),
+      errorBox: document.getElementById("errorBox"),
+      tickerSelect: document.getElementById("tickerSelect"),
+      signalSelect: document.getElementById("signalSelect"),
+      rangeSelect: document.getElementById("rangeSelect"),
+      levelMode: document.getElementById("levelMode"),
+      canvas: document.getElementById("chartCanvas"),
+      detailPanel: document.getElementById("detailPanel")
+    };
+
+    function fmt(value, digits = 2) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "n/a";
+      return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+    }
+
+    function fmtPct(value, digits = 1) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "n/a";
+      return `${(n * 100).toLocaleString(undefined, { maximumFractionDigits: digits })}%`;
+    }
+
+    function fmtTime(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return "n/a";
+      return new Date(n * 1000).toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function pillClass(value) {
+      const text = String(value || "").toLowerCase();
+      if (["yes", "allow", "allowed", "ultra_high_conviction", "high_conviction"].includes(text)) return "good";
+      if (["reject", "no", "skip_reject", "skip_no_trade"].includes(text)) return "bad";
+      return "warn";
+    }
+
+    function currentTickerData() {
+      return state.payload && state.payload.tickers[state.selectedTicker];
+    }
+
+    function currentSignal() {
+      const data = currentTickerData();
+      if (!data) return null;
+      return data.signals.find(signal => signal.signal_id === state.selectedSignalId) || data.signals[0] || null;
+    }
+
+    function sortedTickers() {
+      return Object.keys(state.payload.tickers).sort((a, b) => a.localeCompare(b));
+    }
+
+    function fillTickerSelect() {
+      const tickers = sortedTickers();
+      els.tickerSelect.innerHTML = tickers.map(ticker => {
+        const data = state.payload.tickers[ticker];
+        return `<option value="${ticker}">${ticker} (${data.signals.length})</option>`;
+      }).join("");
+      state.selectedTicker = tickers[0] || "";
+      els.tickerSelect.value = state.selectedTicker;
+    }
+
+    function fillSignalSelect() {
+      const data = currentTickerData();
+      const signals = data ? data.signals : [];
+      els.signalSelect.innerHTML = signals.map(signal => {
+        const label = `${fmtTime(signal.decision_time)} | ${signal.bucket || "n/a"} | score ${fmt(signal.model_score, 4)}`;
+        return `<option value="${signal.signal_id}">${label}</option>`;
+      }).join("");
+      if (!signals.find(signal => signal.signal_id === state.selectedSignalId)) {
+        state.selectedSignalId = signals[signals.length - 1] ? signals[signals.length - 1].signal_id : "";
+      }
+      els.signalSelect.value = state.selectedSignalId;
+    }
+
+    function getVisibleCandles(candles, signal) {
+      if (!candles.length) return [];
+      const rangeValue = els.rangeSelect.value;
+      if (rangeValue === "all" || !signal) return candles;
+      const count = Number(rangeValue) || 240;
+      const decisionTime = Number(signal.decision_time);
+      let idx = candles.findIndex(candle => candle.t >= decisionTime);
+      if (idx < 0) idx = candles.length - 1;
+      const before = Math.floor(count * 0.68);
+      const start = Math.max(0, idx - before);
+      const end = Math.min(candles.length, start + count);
+      return candles.slice(Math.max(0, end - count), end);
+    }
+
+    function collectLevels(signal) {
+      if (!signal) return [];
+      const mode = els.levelMode.value;
+      const levels = [];
+      if (mode === "all" || mode === "target") {
+        (signal.target_liquidity || []).forEach(level => levels.push({ ...level, role: "target_side", source: "ranked" }));
+      }
+      if (mode === "all" || mode === "adverse") {
+        (signal.adverse_liquidity || []).forEach(level => levels.push({ ...level, role: "stop_or_swept_side", source: "ranked" }));
+      }
+      if (mode === "all" || mode === "scored") {
+        (signal.liquidity_levels || []).forEach(level => levels.push({ ...level, source: "scored" }));
+      }
+      return levels.filter(level => Number.isFinite(Number(level.price)));
+    }
+
+    function priceDomain(candles, signal, levels) {
+      const values = [];
+      candles.forEach(candle => values.push(candle.h, candle.l));
+      if (signal) {
+        [signal.entry, signal.stop].forEach(value => {
+          if (Number.isFinite(Number(value))) values.push(Number(value));
+        });
+      }
+      levels.forEach(level => values.push(Number(level.price)));
+      (signal && signal.fvg_zones || []).forEach(zone => values.push(Number(zone.lower), Number(zone.upper)));
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const pad = Math.max((max - min) * 0.08, 0.01);
+      return [min - pad, max + pad];
+    }
+
+    function drawChart() {
+      const data = currentTickerData();
+      const signal = currentSignal();
+      const canvas = els.canvas;
+      const ctx = canvas.getContext("2d");
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      if (!data || !data.candles.length) {
+        drawEmpty(ctx, rect.width, rect.height, "No candles loaded for this ticker.");
+        return;
+      }
+
+      const candles = getVisibleCandles(data.candles, signal);
+      const levels = collectLevels(signal);
+      const [minPrice, maxPrice] = priceDomain(candles, signal, levels);
+      const pad = { left: 56, right: 76, top: 24, bottom: 34 };
+      const w = rect.width - pad.left - pad.right;
+      const h = rect.height - pad.top - pad.bottom;
+      const xStep = w / Math.max(candles.length - 1, 1);
+      const candleW = Math.max(3, Math.min(12, xStep * 0.62));
+      const xAt = index => pad.left + index * xStep;
+      const yAt = price => pad.top + (maxPrice - price) / (maxPrice - minPrice) * h;
+
+      drawGrid(ctx, pad, w, h, minPrice, maxPrice, yAt, rect.width);
+      drawFvgZones(ctx, signal, candles, pad, w, yAt, xAt);
+      drawCandles(ctx, candles, xAt, yAt, candleW);
+      drawSignalAndTradeLines(ctx, signal, candles, pad, w, h, xAt, yAt);
+      drawLiquidityLevels(ctx, levels, pad, w, yAt);
+      drawAxisLabels(ctx, candles, pad, w, h, minPrice, maxPrice, xAt, yAt);
+    }
+
+    function drawEmpty(ctx, width, height, text) {
+      ctx.fillStyle = "#0a1016";
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = "#99a8b8";
+      ctx.font = "14px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(text, width / 2, height / 2);
+    }
+
+    function drawGrid(ctx, pad, w, h, minPrice, maxPrice, yAt, width) {
+      ctx.fillStyle = "#0a1016";
+      ctx.fillRect(0, 0, width, pad.top + h + pad.bottom);
+      ctx.strokeStyle = "#1d2a36";
+      ctx.lineWidth = 1;
+      ctx.font = "11px system-ui";
+      ctx.fillStyle = "#8291a1";
+      ctx.textAlign = "right";
+      for (let i = 0; i <= 6; i++) {
+        const price = minPrice + (maxPrice - minPrice) * i / 6;
+        const y = yAt(price);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + w, y);
+        ctx.stroke();
+        ctx.fillText(fmt(price, 2), pad.left - 8, y + 4);
+      }
+    }
+
+    function drawCandles(ctx, candles, xAt, yAt, candleW) {
+      candles.forEach((candle, idx) => {
+        const up = candle.c >= candle.o;
+        const color = up ? "#38d996" : "#fb7185";
+        const x = xAt(idx);
+        const yHigh = yAt(candle.h);
+        const yLow = yAt(candle.l);
+        const yOpen = yAt(candle.o);
+        const yClose = yAt(candle.c);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, yHigh);
+        ctx.lineTo(x, yLow);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        const top = Math.min(yOpen, yClose);
+        const height = Math.max(1, Math.abs(yClose - yOpen));
+        ctx.fillRect(x - candleW / 2, top, candleW, height);
+      });
+    }
+
+    function drawFvgZones(ctx, signal, candles, pad, w, yAt) {
+      if (!signal || !signal.fvg_zones) return;
+      signal.fvg_zones.forEach(zone => {
+        const lower = Number(zone.lower);
+        const upper = Number(zone.upper);
+        if (!Number.isFinite(lower) || !Number.isFinite(upper)) return;
+        const y1 = yAt(Math.max(lower, upper));
+        const y2 = yAt(Math.min(lower, upper));
+        ctx.fillStyle = zone.side === "bear" ? "rgba(251, 113, 133, 0.10)" : "rgba(167, 139, 250, 0.13)";
+        ctx.fillRect(pad.left, y1, w, Math.max(2, y2 - y1));
+        ctx.strokeStyle = zone.side === "bear" ? "rgba(251, 113, 133, 0.38)" : "rgba(167, 139, 250, 0.42)";
+        ctx.strokeRect(pad.left, y1, w, Math.max(2, y2 - y1));
+      });
+    }
+
+    function drawSignalAndTradeLines(ctx, signal, candles, pad, w, h, xAt, yAt) {
+      if (!signal) return;
+      const drawHorizontal = (price, color, label, dash = []) => {
+        const numeric = Number(price);
+        if (!Number.isFinite(numeric)) return;
+        const y = yAt(numeric);
+        ctx.save();
+        ctx.setLineDash(dash);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + w, y);
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = color;
+        ctx.font = "12px system-ui";
+        ctx.textAlign = "left";
+        ctx.fillText(`${label} ${fmt(numeric, 2)}`, pad.left + w + 8, y + 4);
+      };
+      drawHorizontal(signal.entry, "#60a5fa", "Entry");
+      drawHorizontal(signal.stop, "#fb7185", "Stop", [5, 4]);
+      if (Number.isFinite(Number(signal.entry)) && Number.isFinite(Number(signal.risk))) {
+        const target2r = Number(signal.entry) + Number(signal.risk) * (signal.direction === "short" ? -2 : 2);
+        drawHorizontal(target2r, "#f59e0b", "2R", [4, 5]);
+      }
+
+      const t = Number(signal.decision_time);
+      const idx = candles.findIndex(candle => candle.t >= t);
+      if (idx >= 0) {
+        const x = xAt(idx);
+        ctx.strokeStyle = "#f59e0b";
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, pad.top);
+        ctx.lineTo(x, pad.top + h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#f59e0b";
+        ctx.textAlign = "center";
+        ctx.font = "12px system-ui";
+        ctx.fillText("Signal", x, pad.top + 14);
+      }
+    }
+
+    function drawLiquidityLevels(ctx, levels, pad, w, yAt) {
+      levels.forEach(level => {
+        const price = Number(level.price);
+        if (!Number.isFinite(price)) return;
+        const y = yAt(price);
+        const isTarget = level.role === "target_side" || level.side === "BSL";
+        const isScored = level.source === "scored";
+        const color = isTarget ? "#38d996" : "#fb7185";
+        ctx.save();
+        ctx.setLineDash(isScored ? [2, 4] : []);
+        ctx.globalAlpha = isScored ? 0.58 : 0.82;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isScored ? 1 : 1.4;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + w, y);
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = color;
+        ctx.font = "11px system-ui";
+        ctx.textAlign = "left";
+        const label = `${level.side || "LIQ"} ${fmt(level.score, 1)}`;
+        ctx.fillText(label, pad.left + w + 8, y - 3);
+      });
+    }
+
+    function drawAxisLabels(ctx, candles, pad, w, h, minPrice, maxPrice, xAt, yAt) {
+      ctx.fillStyle = "#8291a1";
+      ctx.font = "11px system-ui";
+      ctx.textAlign = "center";
+      const marks = 5;
+      for (let i = 0; i < marks; i++) {
+        const idx = Math.round((candles.length - 1) * i / Math.max(marks - 1, 1));
+        const candle = candles[idx];
+        if (!candle) continue;
+        const x = xAt(idx);
+        const label = new Date(candle.t * 1000).toLocaleDateString(undefined, { month: "short", day: "2-digit" });
+        ctx.fillText(label, x, pad.top + h + 22);
+      }
+    }
+
+    function renderDetails() {
+      const signal = currentSignal();
+      if (!signal) {
+        els.detailPanel.innerHTML = "<div class=\"panel muted\">No signal selected.</div>";
+        return;
+      }
+      const summary = signal.summary_metrics || {};
+      const levels = collectLevels(signal);
+      els.detailPanel.innerHTML = `
+        <div class="panel">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+            <div>
+              <h2>${signal.ticker} ${String(signal.direction || "").toUpperCase()}</h2>
+              <p class="muted">${fmtTime(signal.decision_time)}</p>
+            </div>
+            <span class="pill ${pillClass(signal.bucket)}">${signal.bucket || "n/a"}</span>
+          </div>
+        </div>
+        <div class="detail-grid">
+          ${detail("Permission", signal.permission || "n/a")}
+          ${detail("Rank Score", fmt(signal.model_score, 8))}
+          ${detail("Entry", fmt(signal.entry, 2))}
+          ${detail("Stop", fmt(signal.stop, 2))}
+          ${detail("Risk %", fmtPct(signal.risk_pct_of_entry, 2))}
+          ${detail("Risk Points", fmt(signal.risk, 2))}
+          ${detail("Target Count", fmt(summary.target_liquidity_count, 0))}
+          ${detail("Adverse Count", fmt(summary.adverse_liquidity_count, 0))}
+          ${detail("Target Score", fmt(summary.target_liquidity_score_sum, 2))}
+          ${detail("Adverse Score", fmt(summary.adverse_liquidity_score_sum, 2))}
+        </div>
+        <div class="panel">
+          <h3>Reason</h3>
+          <p style="margin-top:8px">${signal.reason || "n/a"}</p>
+        </div>
+        <div class="panel">
+          <h3>Liquidity Levels</h3>
+          <div class="list" style="margin-top:8px">
+            ${levels.length ? levels.slice(0, 30).map(renderLevel).join("") : "<p class=\"muted\">No levels in selected mode.</p>"}
+          </div>
+        </div>
+      `;
+    }
+
+    function detail(label, value) {
+      return `
+        <div class="detail">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+        </div>
+      `;
+    }
+
+    function renderLevel(level) {
+      const role = level.role ? `${level.role} | ` : "";
+      const side = level.side || "n/a";
+      const source = level.source || "n/a";
+      return `
+        <div class="level">
+          <div>
+            <div class="level-title">${role}${side} @ ${fmt(level.price, 2)}</div>
+            <div class="level-sub">${source} | score ${fmt(level.score, 2)} | ${fmt(level.distance_atr, 2)} ATR</div>
+          </div>
+          <span class="pill ${side === "BSL" ? "good" : "bad"}">${side}</span>
+        </div>
+      `;
+    }
+
+    function renderAll() {
+      fillSignalSelect();
+      const data = currentTickerData();
+      const signal = currentSignal();
+      els.subtitle.textContent = data
+        ? `${data.ticker}: ${data.candles.length} candles, ${data.signals.length} signals`
+        : "No ticker data loaded";
+      if (signal) state.selectedSignalId = signal.signal_id;
+      drawChart();
+      renderDetails();
+    }
+
+    async function boot() {
+      try {
+        const response = await fetch(DATA_URL, { cache: "no-store" });
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        state.payload = await response.json();
+        const summary = state.payload.summary || {};
+        els.payloadStamp.textContent = `payload: ${state.payload.generated_at || "n/a"}`;
+        els.payloadSummary.textContent = `${summary.ticker_count || 0} tickers | ${summary.signal_count || 0} signals`;
+        fillTickerSelect();
+        renderAll();
+      } catch (error) {
+        els.errorBox.style.display = "block";
+        els.errorBox.textContent = `Could not load ${DATA_URL}: ${error.message}`;
+        els.subtitle.textContent = "Chart payload unavailable";
+      }
+    }
+
+    els.tickerSelect.addEventListener("change", () => {
+      state.selectedTicker = els.tickerSelect.value;
+      state.selectedSignalId = "";
+      renderAll();
+    });
+    els.signalSelect.addEventListener("change", () => {
+      state.selectedSignalId = els.signalSelect.value;
+      renderAll();
+    });
+    els.rangeSelect.addEventListener("change", renderAll);
+    els.levelMode.addEventListener("change", renderAll);
+    window.addEventListener("resize", drawChart);
+
+    boot();
+  </script>
+</body>
+</html>
