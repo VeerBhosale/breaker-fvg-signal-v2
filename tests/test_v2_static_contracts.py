@@ -479,6 +479,66 @@ class V2StaticContractsTest(unittest.TestCase):
         self.assertEqual(bridge_row["scored_liquidity_context"][0]["side"], "SSL")
         self.assertTrue(contract["contract_ok"])
 
+    def test_dashboard_bridge_separates_approved_and_mixed_rank_layers(self) -> None:
+        from v2_export_dashboard_bridge import assign_mixed_rank_fields, dashboard_contract_summary, make_dashboard_row
+
+        rows = [
+            make_dashboard_row(
+                {
+                    "signal_id": "TEST.NS|long|1|abc",
+                    "ticker": "TEST.NS",
+                    "side": "long",
+                    "direction": "long",
+                    "decision_time": "1779248700",
+                    "score": "0.0",
+                    "raw_model_score": "0.80",
+                    "tds_decision_class": "reject",
+                    "tds_entry_permission": "reject",
+                    "entry_price": "100",
+                    "stop_price": "95",
+                    "risk": "5",
+                    "tds_reason": "unit reject",
+                    "main_gate_pass": "false",
+                    "main_gate_failures": "unit gate failure",
+                    "dt_target_liquidity_count": "1",
+                },
+                {},
+            ),
+            make_dashboard_row(
+                {
+                    "signal_id": "TEST.NS|long|2|def",
+                    "ticker": "TEST.NS",
+                    "side": "long",
+                    "direction": "long",
+                    "decision_time": "1779252300",
+                    "score": "0.70",
+                    "raw_model_score": "0.70",
+                    "strict_score": "0.70",
+                    "tds_decision_class": "ultra_high_conviction",
+                    "tds_entry_permission": "take_candidate",
+                    "entry_price": "100",
+                    "stop_price": "95",
+                    "risk": "5",
+                    "tds_reason": "unit take",
+                    "main_gate_pass": "true",
+                    "strict_gate_pass": "true",
+                    "dt_target_liquidity_count": "1",
+                },
+                {},
+            ),
+        ]
+        assign_mixed_rank_fields(rows)
+        contract = dashboard_contract_summary(rows)
+
+        self.assertEqual(rows[0]["approved_trade_bucket"], "reject")
+        self.assertEqual(rows[0]["approved_entry_permission"], "no")
+        self.assertEqual(rows[0]["approved_raw_score"], 0.80)
+        self.assertEqual(rows[0]["approved_final_score"], 0.0)
+        self.assertEqual(rows[0]["mixed_rank_bucket"], "mixed_top20")
+        self.assertEqual(rows[0]["mixed_rank_lineage"], "mixed-train, original-current")
+        self.assertEqual(rows[1]["approved_trade_bucket"], "ultra_high_conviction")
+        self.assertTrue(contract["contract_ok"])
+
     def test_paper_replay_normalizes_entry_permission_values(self) -> None:
         from v2_paper_replay_from_decisions import normalize_permission_value, permission_from_row
 

@@ -40,7 +40,18 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing per-ticker liquidity run folders.",
     )
     parser.add_argument("--liquidity-run-prefix", default=DEFAULT_LIQUIDITY_RUN_PREFIX)
-    parser.add_argument("--max-candles-per-ticker", type=int, default=520)
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=185,
+        help="Calendar-day candle lookback from each ticker's latest candle. Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--max-candles-per-ticker",
+        type=int,
+        default=0,
+        help="Optional latest-row cap after lookback filtering. Use 0 for no cap.",
+    )
     parser.add_argument("--max-liquidity-per-signal", type=int, default=80)
     parser.add_argument(
         "--out",
@@ -79,6 +90,13 @@ def as_int(value: Any) -> int | None:
     return int(numeric)
 
 
+def first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in ("", None):
+            return value
+    return None
+
+
 def compact_candle(row: Dict[str, str]) -> Dict[str, float | int]:
     return {
         "t": int(float(row["time"])),
@@ -100,6 +118,44 @@ def compact_signal(row: Dict[str, Any]) -> Dict[str, Any]:
         "bucket": row.get("bucket"),
         "permission": row.get("permission"),
         "trade_action": row.get("trade_action"),
+        "active_process_name": row.get("active_process_name"),
+        "active_trade_bucket": row.get("active_trade_bucket"),
+        "active_trade_permission": row.get("active_trade_permission"),
+        "active_raw_score": as_float(row.get("active_raw_score")),
+        "active_final_score": as_float(row.get("active_final_score")),
+        "active_gate_failures": row.get("active_gate_failures"),
+        "entry_permission_artifact_bucket": row.get("entry_permission_artifact_bucket"),
+        "entry_permission_artifact_permission": row.get("entry_permission_artifact_permission"),
+        "entry_permission_artifact_raw_score": as_float(row.get("entry_permission_artifact_raw_score")),
+        "entry_permission_artifact_final_score": as_float(row.get("entry_permission_artifact_final_score")),
+        "entry_permission_artifact_gate_failures": row.get("entry_permission_artifact_gate_failures"),
+        "approved_trade_layer": row.get("approved_trade_layer"),
+        "approved_trade_bucket": first_present(row.get("approved_trade_bucket"), row.get("bucket")),
+        "approved_entry_permission": first_present(row.get("approved_entry_permission"), row.get("permission")),
+        "approved_raw_score": as_float(first_present(row.get("approved_raw_score"), row.get("raw_model_score"))),
+        "approved_final_score": as_float(first_present(row.get("approved_final_score"), row.get("model_score"))),
+        "approved_strict_score": as_float(first_present(row.get("approved_strict_score"), row.get("strict_score"))),
+        "approved_main_gate_pass": row.get("approved_main_gate_pass") if row.get("approved_main_gate_pass") is not None else row.get("main_gate_pass"),
+        "approved_strict_gate_pass": row.get("approved_strict_gate_pass") if row.get("approved_strict_gate_pass") is not None else row.get("strict_gate_pass"),
+        "approved_score_gate_suppressed": row.get("approved_score_gate_suppressed") if row.get("approved_score_gate_suppressed") is not None else row.get("score_gate_suppressed"),
+        "approved_gate_failures": first_present(row.get("approved_gate_failures"), row.get("rejection_detail")),
+        "mixed_rank_process": row.get("mixed_rank_process"),
+        "mixed_rank_raw_alias": row.get("mixed_rank_raw_alias"),
+        "mixed_rank_lineage": row.get("mixed_rank_lineage"),
+        "mixed_rank_source": row.get("mixed_rank_source"),
+        "mixed_rank_score": as_float(row.get("mixed_rank_score")),
+        "mixed_rank_percentile": as_float(row.get("mixed_rank_percentile")),
+        "mixed_rank_bucket": row.get("mixed_rank_bucket"),
+        "mixed_rank_rank": as_int(row.get("mixed_rank_rank")),
+        "mixed_rank_population": as_int(row.get("mixed_rank_population")),
+        "useful_findings_bucket": row.get("useful_findings_bucket"),
+        "useful_findings_score": as_float(row.get("useful_findings_score")),
+        "useful_findings_source": row.get("useful_findings_source"),
+        "clean_broad_bsl_bucket": row.get("clean_broad_bsl_bucket"),
+        "clean_broad_bsl_source": row.get("clean_broad_bsl_source"),
+        "clean_broad_filter_bucket": row.get("clean_broad_filter_bucket"),
+        "raw_ungated_score": as_float(row.get("raw_ungated_score")),
+        "process_resolution_status": row.get("process_resolution_status"),
         "model_score": as_float(row.get("model_score")),
         "raw_model_score": as_float(row.get("raw_model_score")),
         "main_gate_pass": row.get("main_gate_pass"),
@@ -206,6 +262,8 @@ def compact_original_structure(item: Dict[str, Any], source_path: Path, source_d
         "level_ledgers": {
             "visual_sell_levels": ledgers.get("visual_sell_levels") or [],
             "visual_buy_levels": ledgers.get("visual_buy_levels") or [],
+            "swing_highs": ledgers.get("swing_highs") or [],
+            "swing_lows": ledgers.get("swing_lows") or [],
         },
         "liquidity_clusters": {
             "sell": clusters.get("sell") or [],
@@ -217,6 +275,9 @@ def compact_original_structure(item: Dict[str, Any], source_path: Path, source_d
         },
         "market_skeleton": item.get("market_skeleton") or {},
         "structure_state": item.get("structure_state") or {},
+        "range_state": item.get("range_state") or [],
+        "ranges": item.get("ranges") or [],
+        "rolling_levels": item.get("rolling_levels") or {},
         "structure_source": {
             "path": str(source_path),
             "decision_time": source_decision_time,
@@ -258,13 +319,24 @@ def load_original_structure_by_ticker(
     return by_ticker
 
 
-def load_candles(candles_dir: Path, ticker: str, max_candles: int) -> List[Dict[str, float | int]]:
+def load_candles(
+    candles_dir: Path,
+    ticker: str,
+    max_candles: int,
+    lookback_days: int,
+) -> List[Dict[str, float | int]]:
     path = candles_dir / f"{ticker}_1h.csv"
     if not path.exists():
         return []
     rows = [compact_candle(row) for row in read_csv(path)]
     rows.sort(key=lambda row: int(row["t"]))
-    return rows[-max_candles:]
+    if rows and lookback_days > 0:
+        latest_time = int(rows[-1]["t"])
+        cutoff = latest_time - int(lookback_days) * 24 * 60 * 60
+        rows = [row for row in rows if int(row["t"]) >= cutoff]
+    if max_candles and max_candles > 0:
+        rows = rows[-max_candles:]
+    return rows
 
 
 def enrich_fvg_zones(signal: Dict[str, Any], raw_rows_by_id: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -328,7 +400,7 @@ def main() -> int:
             signal["liquidity_levels"] = liquidity_by_signal.get(signal.get("signal_id"), [])
             signal["fvg_zones"] = signal.get("fvg_zones") or enrich_fvg_zones(signal, raw_by_signal_id)
             total_liquidity += len(signal["liquidity_levels"])
-        candles = load_candles(args.candles_dir, ticker, args.max_candles_per_ticker)
+        candles = load_candles(args.candles_dir, ticker, args.max_candles_per_ticker, args.lookback_days)
         total_candles += len(candles)
         structure = original_structure_by_ticker.get(ticker) or {}
         clusters = structure.get("liquidity_clusters") if isinstance(structure.get("liquidity_clusters"), dict) else {}
@@ -348,6 +420,8 @@ def main() -> int:
             "bridge_run_id": cumulative.get("run_id"),
             "bridge_generated_at": cumulative.get("generated_at"),
             "candles_dir": str(args.candles_dir),
+            "candle_lookback_days": args.lookback_days,
+            "max_candles_per_ticker": args.max_candles_per_ticker,
             "liquidity_root": str(args.liquidity_root),
             "liquidity_run_prefix": args.liquidity_run_prefix,
         },
@@ -360,6 +434,7 @@ def main() -> int:
             "structure_cluster_count": total_structure_clusters,
             "bucket_counts": cumulative.get("bucket_counts") or {},
             "permission_counts": cumulative.get("permission_counts") or {},
+            "process_layers": cumulative.get("process_layers") or {},
         },
         "tickers": ticker_payloads,
     }

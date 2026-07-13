@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Signal V2 V1-Style Chart Dashboard</title>
-  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="../assets/lightweight-charts.standalone.production.js"></script>
   <style>
     :root {
       --bg: #0b0e11;
@@ -654,9 +654,9 @@
         </div>
         <div class="toolbar">
           <button id="rollingLevelsBtn" title="Toggle ranked target/adverse levels">ISL/ISH</button>
-          <button id="rangesBtn" title="Toggle entry, stop, and 2R lines">Ranges</button>
-          <button id="structureBtn" title="Toggle scored liquidity topology">Structure</button>
-          <button id="skeletonBtn" title="Toggle signal markers">Skeleton</button>
+          <button id="rangesBtn" title="Toggle liquidity ranges">Ranges</button>
+          <button id="structureBtn" title="Toggle Phase 1 market structure">Structure</button>
+          <button id="skeletonBtn" title="Toggle HH/LH/HL/LL market skeleton">Skeleton</button>
           <span class="bias-pill" id="skeletonBias">Skeleton: n/a</span>
           <button id="fitBtn">Fit</button>
           <button id="lastSignalBtn">Last signal</button>
@@ -700,6 +700,10 @@
       return "";
     })();
     const DATA_URL = `${REPO_BASE}/chart/data/chart_payload.json`;
+    const SKELETON_MIN_DELTA_ATR = 1.25;
+    const SKELETON_MIN_DELTA_PCT = 0.003;
+    const SKELETON_MIN_LEG_ATR = 1.25;
+    const SKELETON_MAX_MARKERS = 24;
     const state = {
       payload: null,
       tickers: [],
@@ -711,11 +715,14 @@
       structureSeries: [],
       structureZones: [],
       overlayFrame: null,
-      markersVisible: true,
+      overlaySyncStopTimer: null,
+      overlaySyncActive: false,
+      skeletonVisible: false,
       rollingVisible: false,
       rangeVisible: true,
-      structureVisible: false
+      structureVisible: true
     };
+    window.__signalV2DashboardState = state;
 
     const el = {
       leftSummary: document.getElementById("leftSummary"),
@@ -820,7 +827,7 @@
 
     function signalProbability(signal) {
       if (!signal) return { probability: 0, stage: "No signal" };
-      const score = firstFinite(signal.raw_model_score, signal.ungated_model_score, signal.model_probability, signal.model_score);
+      const score = firstFinite(signal.approved_raw_score, signal.raw_model_score, signal.ungated_model_score, signal.model_probability, signal.model_score);
       const probability = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
       let stage = "Not classified";
       if (probability >= 0.7) stage = "Ultra";
@@ -832,7 +839,7 @@
 
     function createChart() {
       if (!window.LightweightCharts) {
-        el.chartError.textContent = "Chart library did not load. Check internet access for lightweight-charts CDN.";
+        el.chartError.textContent = "Chart library did not load. Check ../assets/lightweight-charts.standalone.production.js.";
         el.chartError.style.display = "flex";
         return;
       }
@@ -858,11 +865,18 @@
           width: Math.max(1, chartEl.clientWidth),
           height: Math.max(320, chartEl.clientHeight),
         });
-        scheduleOverlayUpdate();
+        scheduleOverlayUpdateBurst();
       }).observe(chartEl);
       if (state.chart.timeScale().subscribeVisibleTimeRangeChange) {
-        state.chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlayUpdate);
+        state.chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlayUpdateBurst);
       }
+      if (state.chart.timeScale().subscribeVisibleLogicalRangeChange) {
+        state.chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleOverlayUpdateBurst);
+      }
+      if (state.chart.subscribeCrosshairMove) {
+        state.chart.subscribeCrosshairMove(scheduleOverlayUpdate);
+      }
+      bindOverlaySync(chartEl);
     }
 
     function loadTickerList() {
@@ -916,7 +930,9 @@
         low: c.l,
         close: c.c
       }));
+      clearLines();
       state.candleSeries.setData(candleData);
+      resetPriceScale();
       renderMarkers();
       el.chartTitle.textContent = state.ticker.ticker;
       el.chartSubtitle.textContent = `${state.ticker.signals.length} Breaker+FVG signals`;
@@ -926,17 +942,13 @@
         : "Skeleton: n/a";
       renderSignals();
       renderSignalDetail();
-      focusSignal(state.signal);
       state.chart.timeScale().fitContent();
+      scheduleOverlayUpdateBurst();
     }
 
     function renderMarkers() {
       if (!state.ticker || !state.candleSeries) return;
-      if (!state.markersVisible) {
-        state.candleSeries.setMarkers([]);
-        return;
-      }
-      const markers = state.ticker.signals
+      const signalMarkers = state.ticker.signals
         .map((signal, index) => {
           const time = nearestCandleTime(signal.signal_time || signal.decision_time);
           if (!time) return null;
@@ -949,8 +961,81 @@
           };
         })
         .filter(Boolean);
+      const markers = [...signalMarkers, ...skeletonMarkers()].sort((a, b) => a.time - b.time);
       window.__lastSignalMarkers = markers;
       state.candleSeries.setMarkers(markers);
+    }
+
+    function skeletonAtrBaseline() {
+      const candles = state.ticker?.candles || [];
+      if (candles.length < 2) return 0;
+      const start = Math.max(1, candles.length - 15);
+      const ranges = [];
+      for (let i = start; i < candles.length; i += 1) {
+        const candle = candles[i];
+        const prev = candles[i - 1];
+        const tr = Math.max(
+          Number(candle.h) - Number(candle.l),
+          Math.abs(Number(candle.h) - Number(prev.c)),
+          Math.abs(Number(candle.l) - Number(prev.c)),
+        );
+        if (Number.isFinite(tr) && tr > 0) ranges.push(tr);
+      }
+      if (!ranges.length) return 0;
+      return ranges.reduce((sum, value) => sum + value, 0) / ranges.length;
+    }
+
+    function skeletonOppositeLegOk(curr, oppositeLevels, atrBaseline) {
+      if (!atrBaseline) return true;
+      const previousOpposite = [...(oppositeLevels || [])]
+        .filter(level => level.time && level.time < curr.time && level.price !== null && level.price !== undefined)
+        .sort((a, b) => b.time - a.time)[0];
+      if (!previousOpposite) return true;
+      return Math.abs(Number(curr.price) - Number(previousOpposite.price)) >= atrBaseline * SKELETON_MIN_LEG_ATR;
+    }
+
+    function skeletonMarkers() {
+      if (!state.ticker || !state.skeletonVisible) return [];
+      const ledgers = state.ticker.level_ledgers || {};
+      const markers = [];
+      const atrBaseline = skeletonAtrBaseline();
+      const addTransitionMarkers = (levels, oppositeLevels, type) => {
+        const sorted = [...(levels || [])]
+          .filter(level => level.time && level.price !== null && level.price !== undefined)
+          .sort((a, b) => a.time - b.time);
+        for (let i = 1; i < sorted.length; i += 1) {
+          const prev = sorted[i - 1];
+          const curr = sorted[i];
+          const price = Number(curr.price);
+          const prevPrice = Number(prev.price);
+          const delta = Math.abs(price - prevPrice);
+          const threshold = Math.max(
+            atrBaseline * SKELETON_MIN_DELTA_ATR,
+            Math.abs(price) * SKELETON_MIN_DELTA_PCT,
+          );
+          if (delta < threshold) continue;
+          if (!skeletonOppositeLegOk(curr, oppositeLevels, atrBaseline)) continue;
+          const label = type === "high"
+            ? (price > prevPrice ? "HH" : price < prevPrice ? "LH" : "EH")
+            : (price > prevPrice ? "HL" : price < prevPrice ? "LL" : "EL");
+          if (label === "EH" || label === "EL") continue;
+          const bullish = label === "HH" || label === "HL";
+          const bearish = label === "LH" || label === "LL";
+          markers.push({
+            time: nearestCandleTime(curr.time) || curr.time,
+            position: type === "high" ? "aboveBar" : "belowBar",
+            color: bullish ? "#00d09c" : bearish ? "#ff6b6b" : "#9aa7b2",
+            shape: "circle",
+            text: label,
+            size: 1,
+          });
+        }
+      };
+      addTransitionMarkers(ledgers.swing_highs, ledgers.swing_lows, "high");
+      addTransitionMarkers(ledgers.swing_lows, ledgers.swing_highs, "low");
+      return markers
+        .sort((a, b) => a.time - b.time)
+        .slice(-SKELETON_MAX_MARKERS);
     }
 
     function clearLines() {
@@ -960,6 +1045,23 @@
       state.structureSeries = [];
       state.structureZones.forEach(zone => zone.remove());
       state.structureZones = [];
+      scheduleOverlayUpdateBurst();
+    }
+
+    function resetPriceScale() {
+      if (!state.chart || !state.candleSeries) return;
+      try {
+        const chartScale = state.chart.priceScale && state.chart.priceScale("right");
+        chartScale && chartScale.applyOptions && chartScale.applyOptions({ autoScale: true });
+      } catch (error) {
+        // Lightweight Charts versions differ on exposed price scale methods.
+      }
+      try {
+        const seriesScale = state.candleSeries.priceScale && state.candleSeries.priceScale();
+        seriesScale && seriesScale.applyOptions && seriesScale.applyOptions({ autoScale: true });
+      } catch (error) {
+        // Best-effort autoscale reset for ticker switches.
+      }
     }
 
     function addPriceLine(price, color, title, style = LightweightCharts.LineStyle.Solid) {
@@ -1079,6 +1181,61 @@
       });
     }
 
+    function scheduleOverlayUpdateBurst() {
+      scheduleOverlayUpdate();
+      [40, 120, 260].forEach(delay => {
+        window.setTimeout(scheduleOverlayUpdate, delay);
+      });
+    }
+
+    function startOverlayInteractionSync() {
+      if (state.overlaySyncActive) {
+        if (state.overlaySyncStopTimer) window.clearTimeout(state.overlaySyncStopTimer);
+        state.overlaySyncStopTimer = window.setTimeout(stopOverlayInteractionSync, 900);
+        scheduleOverlayUpdate();
+        return;
+      }
+      state.overlaySyncActive = true;
+      if (state.overlaySyncStopTimer) window.clearTimeout(state.overlaySyncStopTimer);
+      const tick = () => {
+        if (!state.overlaySyncActive) return;
+        updateStructureOverlays();
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+      state.overlaySyncStopTimer = window.setTimeout(stopOverlayInteractionSync, 900);
+    }
+
+    function stopOverlayInteractionSync() {
+      state.overlaySyncActive = false;
+      if (state.overlaySyncStopTimer) {
+        window.clearTimeout(state.overlaySyncStopTimer);
+        state.overlaySyncStopTimer = null;
+      }
+      scheduleOverlayUpdateBurst();
+    }
+
+    function bindOverlaySync(chartEl) {
+      const startEvents = ["wheel", "mousedown", "mousemove", "pointerdown", "pointermove", "touchstart", "touchmove"];
+      const stopEvents = ["mouseup", "mouseleave", "pointerup", "pointercancel", "touchend", "touchcancel"];
+      startEvents.forEach(eventName => {
+        chartEl.addEventListener(eventName, startOverlayInteractionSync, { passive: true });
+      });
+      stopEvents.forEach(eventName => {
+        chartEl.addEventListener(eventName, stopOverlayInteractionSync, { passive: true });
+      });
+      ["mousemove", "pointermove", "touchmove"].forEach(eventName => {
+        window.addEventListener(eventName, () => {
+          if (state.overlaySyncActive) startOverlayInteractionSync();
+        }, { passive: true });
+      });
+      ["mouseup", "pointerup", "pointercancel", "touchend", "touchcancel"].forEach(eventName => {
+        window.addEventListener(eventName, () => {
+          if (state.overlaySyncActive) stopOverlayInteractionSync();
+        }, { passive: true });
+      });
+    }
+
     function addLevelSegment(level, color, title, style = LightweightCharts.LineStyle.Dotted) {
       const numeric = Number(level && level.price);
       if (!Number.isFinite(numeric)) return;
@@ -1126,7 +1283,6 @@
       if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(numeric)) return;
       if (end <= start) return;
       if (!timeFitsCurrentTicker(start) || !timeFitsCurrentTicker(end)) return;
-      if (!priceFitsCurrentTicker(numeric)) return;
       const series = state.chart.addLineSeries({
         color,
         lineWidth,
@@ -1152,7 +1308,6 @@
 
     function addOriginalFvgZone(startTime, endTime, lower, upper, colors) {
       if (!timeFitsCurrentTicker(startTime) || !timeFitsCurrentTicker(endTime)) return;
-      if (!priceFitsCurrentTicker(lower) || !priceFitsCurrentTicker(upper)) return;
       const chartEl = document.getElementById("chart");
       const zone = document.createElement("canvas");
       zone.className = "fvg-zone-canvas";
@@ -1280,8 +1435,12 @@
         if (Number(a.fvg_backed_count || 0) !== Number(b.fvg_backed_count || 0)) return Number(b.fvg_backed_count || 0) - Number(a.fvg_backed_count || 0);
         return Number(b.density || 0) - Number(a.density || 0);
       };
-      const visibleSellClusters = (clusters.sell || []).filter(isVisibleLiquidityBand).sort(compareLiquidityBands);
-      const visibleBuyClusters = (clusters.buy || []).filter(isVisibleLiquidityBand).sort(compareLiquidityBands);
+      const visibleSellClusters = (clusters.sell || [])
+        .filter(isVisibleLiquidityBand)
+        .sort(compareLiquidityBands);
+      const visibleBuyClusters = (clusters.buy || [])
+        .filter(isVisibleLiquidityBand)
+        .sort(compareLiquidityBands);
       const overlapsCluster = (level, clusterList) => {
         const price = Number(level.price);
         if (!Number.isFinite(price)) return false;
@@ -1318,13 +1477,13 @@
         });
         return output;
       };
+      const maxLinesPerSide = 12;
 
       [
         ["visual_sell_levels", "#00d09c", 1, visibleSellClusters],
         ["visual_buy_levels", "#ff5c5c", 1, visibleBuyClusters],
       ].forEach(([key, color, lineStyle, clusterList]) => {
         dedupeLevels(ledgers[key] || [])
-          .filter(level => level.type === "ISL" || level.type === "ISH")
           .filter(level => !overlapsCluster(level, clusterList))
           .sort((a, b) => {
             const rankA = a.type === "ISL" || a.type === "ISH" ? 2 : 1;
@@ -1332,7 +1491,7 @@
             if (rankA !== rankB) return rankB - rankA;
             return (b.age_bars || 0) - (a.age_bars || 0);
           })
-          .slice(0, 12)
+          .slice(0, maxLinesPerSide)
           .forEach(level => {
             const time = Number(level.source_time || level.time);
             const price = Number(level.price);
@@ -1383,10 +1542,12 @@
         visualBuyLevels: (ledgers.visual_buy_levels || []).length,
         visibleSellClusters: visibleSellClusters.length,
         visibleBuyClusters: visibleBuyClusters.length,
+        renderedLevelSourceCount: (ledgers.visual_sell_levels || []).length + (ledgers.visual_buy_levels || []).length,
+        renderedClusterCount: visibleSellClusters.length + visibleBuyClusters.length,
         structureSeries: state.structureSeries.length,
         structureZones: state.structureZones.length,
       };
-      scheduleOverlayUpdate();
+      scheduleOverlayUpdateBurst();
     }
 
     function signalSegmentEnd(signal, bars = 14) {
@@ -1477,11 +1638,14 @@
       if (!state.ticker) return;
       el.signals.innerHTML = state.ticker.signals.slice().reverse().map((signal, reverseIndex) => {
         const index = state.ticker.signals.length - reverseIndex;
+        const approvedBucket = signal.active_trade_bucket || signal.approved_trade_bucket || signal.bucket || "n/a";
+        const mixedBucket = signal.mixed_rank_bucket || "mixed n/a";
+        const displayScore = firstFinite(signal.active_raw_score, signal.raw_ungated_score, signal.approved_raw_score, signal.raw_model_score, signal.model_score);
         return `
           <div class="signal-card ${state.signal === signal ? "active" : ""}" data-id="${signal.signal_id}">
-            <div class="row"><strong>Signal ${index}</strong><span class="score">${fmt(signal.model_score, 5)}</span></div>
-            <div class="row"><span>${fmtTime(signal.decision_time)}</span><span>${signal.bucket || "n/a"}</span></div>
-            <div class="row"><span>permission</span><span>${signal.permission || "n/a"}</span></div>
+            <div class="row"><strong>Signal ${index}</strong><span class="score">${fmt(displayScore, 5)}</span></div>
+            <div class="row"><span>${fmtTime(signal.decision_time)}</span><span>${approvedBucket}</span></div>
+            <div class="row"><span>mixed rank</span><span>${mixedBucket}</span></div>
           </div>
         `;
       }).join("");
@@ -1512,36 +1676,69 @@
       const signalCount = payloadSummary.signal_count || 0;
       const probability = signalProbability(s);
       const angle = -90 + Math.max(0, Math.min(1, probability.probability)) * 180;
-      const badgeClass = s.permission === "yes" ? "take" : s.bucket === "reject" ? "reject" : "neutral";
-      const rawScore = firstFinite(s.raw_model_score, s.ungated_model_score, s.model_probability);
-      const finalScore = firstFinite(s.model_score);
+      const activeProcess = s.active_process_name || "n/a";
+      const activeBucket = s.active_trade_bucket || s.approved_trade_bucket || s.bucket || "n/a";
+      const activePermission = s.active_trade_permission || s.approved_entry_permission || s.permission || "n/a";
+      const approvedBucket = s.approved_trade_bucket || s.bucket || "n/a";
+      const approvedPermission = s.approved_entry_permission || s.permission || "n/a";
+      const badgeClass = approvedPermission === "yes" ? "take" : approvedBucket === "reject" ? "reject" : "neutral";
+      const rawScore = firstFinite(s.active_raw_score, s.raw_ungated_score, s.approved_raw_score, s.raw_model_score, s.ungated_model_score, s.model_probability);
+      const finalScore = firstFinite(s.active_final_score, s.approved_final_score, s.model_score);
       const rawScoreText = rawScore === null ? "n/a" : fmt(rawScore, 8);
       const finalScoreText = finalScore === null ? "n/a" : fmt(finalScore, 8);
-      const mainGate = s.main_gate_pass ?? s.long_artifact_main_gate_pass;
-      const strictGate = s.strict_gate_pass ?? s.long_artifact_strict_gate_pass;
-      const rejectionDetail = s.rejection_detail || s.main_gate_failures || s.strict_gate_failures || s.reason || s.missing_fields || "";
+      const mainGate = s.approved_main_gate_pass ?? s.main_gate_pass ?? s.long_artifact_main_gate_pass;
+      const strictGate = s.approved_strict_gate_pass ?? s.strict_gate_pass ?? s.long_artifact_strict_gate_pass;
+      const rejectionDetail = s.active_gate_failures || s.approved_gate_failures || s.rejection_detail || s.main_gate_failures || s.strict_gate_failures || s.reason || s.missing_fields || "";
+      const mixedScore = firstFinite(s.mixed_rank_score);
+      const mixedPercentile = firstFinite(s.mixed_rank_percentile);
+      const usefulScore = firstFinite(s.useful_findings_score);
+      const mixedRank = s.mixed_rank_rank && s.mixed_rank_population
+        ? `${s.mixed_rank_rank} / ${s.mixed_rank_population}`
+        : "n/a";
       const auditNote = rawScore === null
         ? `Current hosted payload has final decision scores only. Raw ungated model score is not exported yet; the next rerun must include raw score diagnostics. Hosted payload: ${signalCount} decisions, reject count ${rejectCount}.`
-        : `Raw score is the ungated model probability. Final rank score is the permission score after gates and thresholds.`;
+        : `The panel separates active permission, raw score, useful-findings context, clean-broad BSL context, and mixed-rank diagnostics. A high raw/rank score can still be rejected by the active gate.`;
       el.tradeSystemPanel.innerHTML = `
         <div class="trade-system-panel">
           <div class="trade-system-head">
             <div>
               <div class="trade-system-title">TRADE RANKER</div>
-              <div class="trade-system-source">${s.score_source || "model_artifacts"} | ${s.reason || ""}</div>
+              <div class="trade-system-source">${activeProcess} | ${s.process_resolution_status || s.reason || ""}</div>
             </div>
-            <span class="trade-system-badge ${badgeClass}">${s.bucket || "n/a"}</span>
+            <span class="trade-system-badge ${badgeClass}">${activeBucket}</span>
           </div>
           <div class="metric-grid">
             ${metric("System", s.trade_action || "n/a")}
-            ${metric("Permission", s.permission || "n/a")}
+            ${metric("Permission", activePermission)}
+            ${metric("Active Bucket", activeBucket)}
+            ${metric("Entry Artifact", approvedBucket)}
             ${metric("Raw Score", rawScoreText)}
             ${metric("Final Score", finalScoreText)}
             ${metric("Main Gate", mainGate === undefined || mainGate === null ? "n/a" : String(mainGate))}
             ${metric("Strict Gate", strictGate === undefined || strictGate === null ? "n/a" : String(strictGate))}
+            ${metric("Useful Bucket", s.useful_findings_bucket || "n/a")}
+            ${metric("Useful Score", usefulScore === null ? "n/a" : fmt(usefulScore, 8))}
+            ${metric("Clean Broad BSL", s.clean_broad_bsl_bucket || s.clean_broad_filter_bucket || "n/a")}
+            ${metric("Mixed Bucket", s.mixed_rank_bucket || "n/a")}
+            ${metric("Mixed Percentile", mixedPercentile === null ? "n/a" : fmtPct(mixedPercentile, 1))}
+            ${metric("Mixed Score", mixedScore === null ? "n/a" : fmt(mixedScore, 8))}
+            ${metric("Mixed Rank", mixedRank)}
             ${metric("Entry", fmt(s.entry, 2))}
             ${metric("Stop", fmt(s.stop, 2))}
             ${metric("Risk %", fmtPct(s.risk_pct_of_entry, 2))}
+          </div>
+          <div class="audit-note">
+            <strong>Selection layers</strong>
+            Active: ${activeProcess}<br>
+            Entry permission artifact: ${s.entry_permission_artifact_bucket || approvedBucket}<br>
+            Useful findings: ${s.useful_findings_bucket || "n/a"} ${s.useful_findings_source ? `(${s.useful_findings_source})` : ""}<br>
+            Clean broad BSL: ${s.clean_broad_bsl_bucket || s.clean_broad_filter_bucket || "n/a"}
+          </div>
+          <div class="audit-note">
+            <strong>Mixed-rank diagnostic</strong>
+            ${s.mixed_rank_process || "n/a"}<br>
+            ${s.mixed_rank_raw_alias || "n/a"}<br>
+            ${s.mixed_rank_lineage || "n/a"}
           </div>
           <div class="audit-note">${auditNote}</div>
           <div class="audit-note">
@@ -1611,11 +1808,15 @@
       const idx = candles.findIndex(candle => candle.t >= signal.decision_time);
       if (idx < 0) {
         state.chart.timeScale().fitContent();
+        resetPriceScale();
+        scheduleOverlayUpdateBurst();
         return;
       }
       const from = candles[Math.max(0, idx - 110)].t;
       const to = candles[Math.min(candles.length - 1, idx + 55)].t;
       state.chart.timeScale().setVisibleRange({ from, to });
+      resetPriceScale();
+      scheduleOverlayUpdateBurst();
     }
 
     async function boot() {
@@ -1628,7 +1829,12 @@
     }
 
     el.searchInput.addEventListener("input", renderWatchlist);
-    document.getElementById("fitBtn").addEventListener("click", () => state.chart && state.chart.timeScale().fitContent());
+    document.getElementById("fitBtn").addEventListener("click", () => {
+      if (!state.chart) return;
+      resetPriceScale();
+      state.chart.timeScale().fitContent();
+      scheduleOverlayUpdateBurst();
+    });
     document.getElementById("lastSignalBtn").addEventListener("click", () => focusSignal(state.signal));
     el.rollingLevelsBtn.addEventListener("click", () => {
       state.rollingVisible = !state.rollingVisible;
@@ -1647,10 +1853,10 @@
       el.structureBtn.classList.toggle("active", state.structureVisible);
       renderLines();
     });
-    el.skeletonBtn.classList.toggle("active", state.markersVisible);
+    el.skeletonBtn.classList.toggle("active", state.skeletonVisible);
     el.skeletonBtn.addEventListener("click", () => {
-      state.markersVisible = !state.markersVisible;
-      el.skeletonBtn.classList.toggle("active", state.markersVisible);
+      state.skeletonVisible = !state.skeletonVisible;
+      el.skeletonBtn.classList.toggle("active", state.skeletonVisible);
       renderMarkers();
     });
     document.getElementById("leftPanelBtn").addEventListener("click", () => {

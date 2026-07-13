@@ -4,6 +4,7 @@ import argparse
 import csv
 import glob
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
@@ -12,6 +13,23 @@ from v2_common import V2_ROOT, append_jsonl, read_csv, rel, utc_stamp, write_csv
 
 TARGET_PREFIX = "dt_target_liquidity_"
 ADVERSE_PREFIX = "dt_adverse_liquidity_"
+SIGNAL_MODEL_ROOT = Path(r"D:\Coding\Python Codes\Newtest\Breaker_Based\signal_model")
+USEFUL_FINDINGS_PREDICTIONS = (
+    SIGNAL_MODEL_ROOT / "datasets" / "predictions" / "signal_useful_findings_second_stage_v1_predictions.csv"
+)
+APPROVED_TRADE_LAYER = "APPROVED_TRADE_DECISION_V1"
+ENTRY_PERMISSION_PROCESS = "ENTRY_PERMISSION_ULTRA_ONLY_V1"
+ACTIVE_SELECTION_PROCESS = "USEFUL_FINDINGS_SECOND_STAGE_V1_ACTIVE"
+MIXED_RANK_PROCESS = "MIXED_RANKED_BSL_TOP20_V1_CURRENT_ANALOG"
+MIXED_RANK_RAW_ALIAS = "low_swept_pressure_access_q50 / current_topbucket"
+MIXED_RANK_LINEAGE = "mixed-train, original-current"
+MIXED_RANK_SOURCE = "approved_long_artifact_raw_score_ranked_current_rows"
+USEFUL_ACTIVE_PERMISSIONS = {
+    "ultra_high_conviction": "take_candidate",
+    "high_conviction": "take_candidate",
+    "neutral_no_edge": "no",
+    "reject": "no",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -203,6 +221,75 @@ def setup_fvg_zones_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     ]
 
 
+def signal_time_key(row: Dict[str, Any]) -> tuple[str, int | None]:
+    ticker = str(row.get("ticker") or row.get("ticker_norm") or "").strip()
+    decision_time = to_int(row.get("decision_time"))
+    signal_id = str(row.get("signal_id") or "")
+    if decision_time is None and "|" in signal_id:
+        parts = signal_id.split("|")
+        if len(parts) >= 3:
+            decision_time = to_int(parts[2])
+    return ticker, decision_time
+
+
+def load_optional_process_rows(path: Path) -> tuple[Dict[str, Dict[str, Any]], Dict[tuple[str, int | None], Dict[str, Any]]]:
+    by_signal_id: Dict[str, Dict[str, Any]] = {}
+    by_time: Dict[tuple[str, int | None], Dict[str, Any]] = {}
+    if not path.exists():
+        return by_signal_id, by_time
+    for row in read_csv(path):
+        signal_id = row.get("signal_id")
+        if signal_id:
+            by_signal_id[signal_id] = row
+        by_time[signal_time_key(row)] = row
+    return by_signal_id, by_time
+
+
+def process_lookup(
+    row: Dict[str, Any],
+    by_signal_id: Dict[str, Dict[str, Any]],
+    by_time: Dict[tuple[str, int | None], Dict[str, Any]],
+) -> Dict[str, Any]:
+    signal_id = row.get("signal_id")
+    if signal_id and signal_id in by_signal_id:
+        return by_signal_id[signal_id]
+    return by_time.get(signal_time_key(row), {})
+
+
+def clean_broad_bucket_from_useful(row: Dict[str, Any]) -> str | None:
+    if not row:
+        return None
+    if str(row.get("clean_broad_v2_member") or "").strip() in {"1", "1.0", "true", "True"}:
+        return "best_combined_v2_member"
+    if str(row.get("clean_broad_v2_looser_member") or "").strip() in {"1", "1.0", "true", "True"}:
+        return "best_combined_v2_looser_member"
+    return None
+
+
+def active_from_useful_findings(
+    useful_bucket: Any,
+    useful_score: float | None,
+    raw_model_score: float | None,
+    final_model_score: float | None,
+    useful_row: Dict[str, Any],
+) -> Dict[str, Any]:
+    bucket = str(useful_bucket or "").strip() or "insufficient_data"
+    permission = USEFUL_ACTIVE_PERMISSIONS.get(bucket, "cannot_classify")
+    active_score = useful_score
+    if active_score is None:
+        active_score = raw_model_score if raw_model_score is not None else final_model_score
+    if bucket == "insufficient_data":
+        gate_failures = "no useful-findings process row matched this signal_id/ticker_time"
+    else:
+        gate_failures = useful_row.get("rejection_reason") or useful_row.get("gate_failures") or None
+    return {
+        "bucket": bucket,
+        "permission": permission,
+        "score": active_score,
+        "gate_failures": gate_failures,
+    }
+
+
 def load_decision_rows(paths: Iterable[Path]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for path in paths:
@@ -301,11 +388,18 @@ def permission_from_row(row: Dict[str, Any]) -> str:
     return "no" if bucket in {"reject", "insufficient_data", "not_classified"} else "review"
 
 
-def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+def make_dashboard_row(
+    row: Dict[str, Any],
+    liquidity_by_signal: Dict[str, List[Dict[str, Any]]],
+    useful_by_signal_id: Dict[str, Dict[str, Any]] | None = None,
+    useful_by_time: Dict[tuple[str, int | None], Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     signal_id = row.get("signal_id") or ""
     target_levels = extract_ranked_levels(row, TARGET_PREFIX)
     adverse_levels = extract_ranked_levels(row, ADVERSE_PREFIX)
     scored_context = compact_scored_candidates(liquidity_by_signal.get(signal_id, []))
+    approved_bucket = bucket_from_row(row)
+    approved_permission = permission_from_row(row)
     score = to_float(row.get("score"))
     if score is None:
         score = to_float(row.get("prediction"))
@@ -334,6 +428,13 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
         and score == 0
         and main_gate_pass is False
     )
+    mixed_rank_score = raw_model_score
+    mixed_rank_score_basis = "raw_model_score"
+    if mixed_rank_score is None:
+        mixed_rank_score = score
+        mixed_rank_score_basis = "final_model_score_fallback"
+    if mixed_rank_score is None:
+        mixed_rank_score_basis = None
     rejection_detail = None
     if score_gate_suppressed and main_gate_failures:
         rejection_detail = f"main_gate_failed:{main_gate_failures}"
@@ -349,6 +450,43 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
     )
     if not missing_fields and row.get("missing_required_feature_count") not in ("", None):
         missing_fields = f"missing_required_feature_count={row.get('missing_required_feature_count')}"
+    useful_row = process_lookup(row, useful_by_signal_id or {}, useful_by_time or {})
+    useful_bucket = (
+        useful_row.get("conviction_label")
+        or useful_row.get("decision_class")
+        or None
+    )
+    useful_score = first_float(
+        useful_row,
+        [
+            "live_score_plus_useful_oof_score",
+            "clean_score_plus_useful_oof_score",
+            "useful_global_oof_score",
+            "clean_useful_oof_score",
+        ],
+    )
+    clean_broad_bucket = (
+        clean_broad_bucket_from_useful(useful_row)
+        or row.get("clean_broad_filter_bucket")
+        or None
+    )
+    active_selection = active_from_useful_findings(
+        useful_bucket,
+        useful_score,
+        raw_model_score,
+        score,
+        useful_row,
+    )
+    active_bucket = active_selection["bucket"]
+    active_permission = active_selection["permission"]
+    active_score = active_selection["score"]
+    active_gate_failures = active_selection["gate_failures"]
+    active_missing_fields = missing_fields
+    if active_bucket == "insufficient_data" and not active_missing_fields:
+        active_missing_fields = active_gate_failures
+    process_resolution_status = (
+        "useful_findings_active; entry_permission_artifact_and_mixed_rank_exposed_separately"
+    )
     return {
         "signal_id": signal_id,
         "candidate_row_id": row.get("candidate_row_id"),
@@ -357,11 +495,50 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
         "decision_time": decision_time,
         "signal_time": to_int(row.get("signal_time")),
         "feature_cutoff_time": to_int(row.get("feature_cutoff_time")),
-        "bucket": bucket_from_row(row),
-        "permission": permission_from_row(row),
+        "bucket": active_bucket,
+        "permission": active_permission,
+        "active_process_name": ACTIVE_SELECTION_PROCESS,
+        "active_trade_bucket": active_bucket,
+        "active_trade_permission": active_permission,
+        "active_raw_score": active_score,
+        "active_final_score": active_score,
+        "active_gate_failures": active_gate_failures,
+        "entry_permission_artifact_bucket": approved_bucket,
+        "entry_permission_artifact_permission": approved_permission,
+        "entry_permission_artifact_raw_score": raw_model_score,
+        "entry_permission_artifact_final_score": score,
+        "entry_permission_artifact_gate_failures": rejection_detail or main_gate_failures or strict_gate_failures or reason,
+        "useful_findings_bucket": useful_bucket,
+        "useful_findings_score": useful_score,
+        "useful_findings_source": useful_row.get("prediction_source") or None,
+        "clean_broad_bsl_bucket": clean_broad_bucket,
+        "clean_broad_bsl_source": "signal_useful_findings_second_stage_v1" if clean_broad_bucket else None,
+        "raw_ungated_score": raw_model_score,
+        "process_resolution_status": process_resolution_status,
+        "approved_trade_layer": APPROVED_TRADE_LAYER,
+        "approved_trade_bucket": approved_bucket,
+        "approved_entry_permission": approved_permission,
+        "approved_raw_score": raw_model_score,
+        "approved_final_score": score,
+        "approved_strict_score": strict_score,
+        "approved_main_gate_pass": main_gate_pass,
+        "approved_strict_gate_pass": strict_gate_pass,
+        "approved_score_gate_suppressed": score_gate_suppressed,
+        "approved_gate_failures": rejection_detail or main_gate_failures or strict_gate_failures or reason,
+        "mixed_rank_process": MIXED_RANK_PROCESS,
+        "mixed_rank_raw_alias": MIXED_RANK_RAW_ALIAS,
+        "mixed_rank_lineage": MIXED_RANK_LINEAGE,
+        "mixed_rank_source": MIXED_RANK_SOURCE,
+        "mixed_rank_score": mixed_rank_score,
+        "mixed_rank_score_basis": mixed_rank_score_basis,
+        "mixed_rank_bucket": None,
+        "mixed_rank_percentile": None,
+        "mixed_rank_rank": None,
+        "mixed_rank_population": None,
+        "clean_broad_filter_bucket": row.get("clean_broad_filter_bucket") or None,
         "permission_raw": row.get("tds_entry_permission") or row.get("entry_permission") or row.get("permission") or None,
         "trade_action": row.get("tds_trade_action") or None,
-        "model_score": score,
+        "model_score": active_score,
         "raw_model_score": raw_model_score,
         "main_gate_pass": main_gate_pass,
         "strict_gate_pass": strict_gate_pass,
@@ -378,7 +555,7 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
         "reason": reason,
         "rejection_detail": rejection_detail,
         "hard_gate_note": row.get("tds_hard_gate_note") or None,
-        "missing_fields": missing_fields,
+        "missing_fields": active_missing_fields,
         "target_liquidity": target_levels,
         "adverse_liquidity": adverse_levels,
         "scored_liquidity_context": scored_context,
@@ -407,6 +584,74 @@ def make_dashboard_row(row: Dict[str, Any], liquidity_by_signal: Dict[str, List[
     }
 
 
+def assign_mixed_rank_fields(rows: Sequence[Dict[str, Any]]) -> None:
+    scored_rows = [row for row in rows if to_float(row.get("mixed_rank_score")) is not None]
+    scored_rows.sort(
+        key=lambda row: (
+            -(to_float(row.get("mixed_rank_score")) or -1.0),
+            str(row.get("ticker") or ""),
+            str(row.get("signal_id") or ""),
+        )
+    )
+    n = len(scored_rows)
+    if n == 0:
+        for row in rows:
+            row["mixed_rank_bucket"] = "mixed_rank_unavailable"
+        return
+
+    top20_count = max(1, math.ceil(n * 0.20))
+    top30_count = max(top20_count, math.ceil(n * 0.30))
+    bottom20_start = max(0, n - max(1, math.ceil(n * 0.20)))
+
+    for idx, row in enumerate(scored_rows):
+        rank = idx + 1
+        percentile = 1.0 if n == 1 else 1.0 - (idx / (n - 1))
+        if idx < top20_count:
+            bucket = "mixed_top20"
+        elif idx < top30_count:
+            bucket = "mixed_top30_not_top20"
+        elif idx >= bottom20_start:
+            bucket = "mixed_bottom20"
+        else:
+            bucket = "mixed_middle"
+        row["mixed_rank_rank"] = rank
+        row["mixed_rank_percentile"] = percentile
+        row["mixed_rank_bucket"] = bucket
+        row["mixed_rank_population"] = n
+
+
+def process_layer_summary(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    approved_positive = [
+        row for row in rows if row.get("approved_trade_bucket") in {"ultra_high_conviction", "high_conviction"}
+    ]
+    mixed_top20 = [row for row in rows if row.get("mixed_rank_bucket") == "mixed_top20"]
+    approved_ids = {row.get("signal_id") for row in approved_positive}
+    mixed_ids = {row.get("signal_id") for row in mixed_top20}
+    high_mixed_rejected = [
+        row
+        for row in mixed_top20
+        if row.get("approved_trade_bucket") in {"reject", "neutral_no_edge", "insufficient_data"}
+    ]
+    return {
+        "active_selection_process": ACTIVE_SELECTION_PROCESS,
+        "active_trade_bucket_counts": count_values(rows, "active_trade_bucket"),
+        "active_trade_permission_counts": count_values(rows, "active_trade_permission"),
+        "useful_findings_bucket_counts": count_values(rows, "useful_findings_bucket"),
+        "approved_trade_bucket_counts": count_values(rows, "approved_trade_bucket"),
+        "approved_entry_permission_counts": count_values(rows, "approved_entry_permission"),
+        "mixed_rank_bucket_counts": count_values(rows, "mixed_rank_bucket"),
+        "approved_ultra_or_high_count": len(approved_positive),
+        "mixed_top20_count": len(mixed_top20),
+        "approved_ultra_or_high_and_mixed_top20_overlap": len(approved_ids & mixed_ids),
+        "approved_ultra_or_high_not_mixed_top20": len(approved_ids - mixed_ids),
+        "mixed_top20_rejected_or_nonpermissioned": len(high_mixed_rejected),
+        "mixed_rank_lineage": MIXED_RANK_LINEAGE,
+        "mixed_rank_process": MIXED_RANK_PROCESS,
+        "mixed_rank_raw_alias": MIXED_RANK_RAW_ALIAS,
+        "mixed_rank_source": MIXED_RANK_SOURCE,
+    }
+
+
 def latest_rows(rows: Sequence[Dict[str, Any]], latest_per_ticker: int, max_live_rows: int) -> List[Dict[str, Any]]:
     sorted_rows = sorted(
         rows,
@@ -432,6 +677,7 @@ def latest_rows(rows: Sequence[Dict[str, Any]], latest_per_ticker: int, max_live
 def write_report(path: Path, audit: Dict[str, Any]) -> None:
     bucket_counts = audit.get("bucket_counts", {})
     permission_counts = audit.get("permission_counts", {})
+    process_layers = audit.get("process_layers") or {}
     lines = [
         "# V2 Dashboard/API Bridge Report",
         "",
@@ -452,6 +698,28 @@ def write_report(path: Path, audit: Dict[str, Any]) -> None:
         lines.append(f"- `{key}`: `{value}`")
     lines.extend(["", "## Permissions", ""])
     for key, value in permission_counts.items():
+        lines.append(f"- `{key}`: `{value}`")
+    lines.extend(["", "## Process Layers", ""])
+    lines.append(
+        "The dashboard bridge keeps approved trade decisions separate from mixed-ranked/topbucket diagnostics."
+    )
+    lines.append("")
+    lines.append(f"- Approved layer: `{APPROVED_TRADE_LAYER}`")
+    lines.append(f"- Mixed-rank process: `{process_layers.get('mixed_rank_process')}`")
+    lines.append(f"- Mixed-rank raw alias: `{process_layers.get('mixed_rank_raw_alias')}`")
+    lines.append(f"- Mixed-rank lineage: `{process_layers.get('mixed_rank_lineage')}`")
+    lines.append(f"- Mixed-rank source: `{process_layers.get('mixed_rank_source')}`")
+    lines.append(
+        f"- Approved ultra/high overlap with mixed top20: `{process_layers.get('approved_ultra_or_high_and_mixed_top20_overlap')}`"
+    )
+    lines.append(
+        f"- Mixed top20 rejected/nonpermissioned by approved scorer: `{process_layers.get('mixed_top20_rejected_or_nonpermissioned')}`"
+    )
+    lines.extend(["", "### Approved Trade Buckets", ""])
+    for key, value in (process_layers.get("approved_trade_bucket_counts") or {}).items():
+        lines.append(f"- `{key}`: `{value}`")
+    lines.extend(["", "### Mixed Rank Buckets", ""])
+    for key, value in (process_layers.get("mixed_rank_bucket_counts") or {}).items():
         lines.append(f"- `{key}`: `{value}`")
     contract = audit.get("dashboard_contract") or {}
     lines.extend(
@@ -517,12 +785,22 @@ def missing_dashboard_fields(row: Dict[str, Any]) -> List[str]:
             "topology_candidate_count",
         ]
     )
+    has_process_rank_context = any(
+        row.get(key) not in ("", None)
+        for key in [
+            "active_final_score",
+            "useful_findings_score",
+            "mixed_rank_score",
+            "raw_ungated_score",
+        ]
+    )
     if (
         bucket != "insufficient_data"
         and not row.get("scored_liquidity_context")
         and not row.get("target_liquidity")
         and not row.get("adverse_liquidity")
         and not has_summary_liquidity_context
+        and not has_process_rank_context
     ):
         missing.append("scored_or_ranked_liquidity_context")
     return missing
@@ -587,7 +865,12 @@ def main() -> int:
 
     decision_rows = load_decision_rows(decision_paths)
     liquidity_by_signal = load_liquidity_rows(liquidity_paths)
-    bridge_rows = [make_dashboard_row(row, liquidity_by_signal) for row in decision_rows]
+    useful_by_signal_id, useful_by_time = load_optional_process_rows(USEFUL_FINDINGS_PREDICTIONS)
+    bridge_rows = [
+        make_dashboard_row(row, liquidity_by_signal, useful_by_signal_id, useful_by_time)
+        for row in decision_rows
+    ]
+    assign_mixed_rank_fields(bridge_rows)
     live_rows = latest_rows(bridge_rows, args.latest_per_ticker, args.max_live_rows)
 
     row_csv_records: List[Dict[str, Any]] = []
@@ -606,6 +889,40 @@ def main() -> int:
                 "decision_time": row.get("decision_time"),
                 "bucket": row.get("bucket"),
                 "permission": row.get("permission"),
+                "active_process_name": row.get("active_process_name"),
+                "active_trade_bucket": row.get("active_trade_bucket"),
+                "active_trade_permission": row.get("active_trade_permission"),
+                "active_raw_score": row.get("active_raw_score"),
+                "active_final_score": row.get("active_final_score"),
+                "active_gate_failures": row.get("active_gate_failures"),
+                "entry_permission_artifact_bucket": row.get("entry_permission_artifact_bucket"),
+                "entry_permission_artifact_permission": row.get("entry_permission_artifact_permission"),
+                "entry_permission_artifact_raw_score": row.get("entry_permission_artifact_raw_score"),
+                "entry_permission_artifact_final_score": row.get("entry_permission_artifact_final_score"),
+                "entry_permission_artifact_gate_failures": row.get("entry_permission_artifact_gate_failures"),
+                "approved_trade_bucket": row.get("approved_trade_bucket"),
+                "approved_entry_permission": row.get("approved_entry_permission"),
+                "approved_raw_score": row.get("approved_raw_score"),
+                "approved_final_score": row.get("approved_final_score"),
+                "approved_main_gate_pass": row.get("approved_main_gate_pass"),
+                "approved_strict_gate_pass": row.get("approved_strict_gate_pass"),
+                "approved_gate_failures": row.get("approved_gate_failures"),
+                "mixed_rank_process": row.get("mixed_rank_process"),
+                "mixed_rank_raw_alias": row.get("mixed_rank_raw_alias"),
+                "mixed_rank_lineage": row.get("mixed_rank_lineage"),
+                "mixed_rank_score": row.get("mixed_rank_score"),
+                "mixed_rank_percentile": row.get("mixed_rank_percentile"),
+                "mixed_rank_bucket": row.get("mixed_rank_bucket"),
+                "mixed_rank_rank": row.get("mixed_rank_rank"),
+                "mixed_rank_population": row.get("mixed_rank_population"),
+                "useful_findings_bucket": row.get("useful_findings_bucket"),
+                "useful_findings_score": row.get("useful_findings_score"),
+                "useful_findings_source": row.get("useful_findings_source"),
+                "clean_broad_bsl_bucket": row.get("clean_broad_bsl_bucket"),
+                "clean_broad_bsl_source": row.get("clean_broad_bsl_source"),
+                "clean_broad_filter_bucket": row.get("clean_broad_filter_bucket"),
+                "raw_ungated_score": row.get("raw_ungated_score"),
+                "process_resolution_status": row.get("process_resolution_status"),
                 "model_score": row.get("model_score"),
                 "raw_model_score": row.get("raw_model_score"),
                 "main_gate_pass": row.get("main_gate_pass"),
@@ -645,6 +962,7 @@ def main() -> int:
         "row_count": len(bridge_rows),
         "bucket_counts": count_values(bridge_rows, "bucket"),
         "permission_counts": count_values(bridge_rows, "permission"),
+        "process_layers": process_layer_summary(bridge_rows),
         "rows": bridge_rows,
     }
     live_payload = {
@@ -673,6 +991,7 @@ def main() -> int:
         "dashboard_contract": contract,
         "bucket_counts": cumulative_payload["bucket_counts"],
         "permission_counts": cumulative_payload["permission_counts"],
+        "process_layers": cumulative_payload["process_layers"],
         "outputs": outputs,
         "original_dashboard_modified": False,
         "status": "passed" if contract["contract_ok"] else "failed",

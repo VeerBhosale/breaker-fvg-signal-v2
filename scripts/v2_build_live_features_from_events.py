@@ -11,23 +11,11 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from v2_common import REPO_ROOT, V1_ROOT, V2_ROOT, append_jsonl, read_csv, rel, utc_stamp, write_csv, write_json
+from v2_common import REPO_ROOT, SHORT_ROOT, V1_ROOT, V2_ROOT, append_jsonl, read_csv, rel, utc_stamp, write_csv, write_json
 
 
-DEFAULT_LONG_PREPROCESS = (
-    V2_ROOT.parents[1]
-    / "Breaker_Based"
-    / "signal_model"
-    / "models"
-    / "trade_system_long_entry_permission_v1_preprocess.json"
-)
-DEFAULT_SHORT_PREPROCESS = (
-    V2_ROOT.parents[1]
-    / "Breaker_Based"
-    / "signal_model_short"
-    / "models"
-    / "short_signal_ssl_travel_oof_v1_1h_2y_all_research_short_goal_v1_current_range50_or_fvg50_hit_at_least_2_ssl_all_features_preprocess.json"
-)
+DEFAULT_LONG_PREPROCESS = V1_ROOT / "models" / "trade_system_long_entry_permission_v1_preprocess.json"
+DEFAULT_SHORT_PREPROCESS = SHORT_ROOT / "models" / "short_signal_ssl_travel_oof_v1_1h_2y_all_research_short_goal_v1_current_range50_or_fvg50_hit_at_least_2_ssl_all_features_preprocess.json"
 DEFAULT_FEATURE_AVAILABILITY_POLICY = V2_ROOT / "configs" / "v2_feature_availability_policy.json"
 DEFAULT_SIGNAL_ARTIFACT_REGISTRY = V1_ROOT / "configs" / "trade_system_signal_model_artifacts_v1.json"
 DEFAULT_SIGNAL_DECISION_CONFIG = V1_ROOT / "configs" / "signal_trade_decision_system_v1_config.json"
